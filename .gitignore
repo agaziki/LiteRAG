@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 运行时数据（数据库/向量缓存/日志）
+data/
+*.log
+
+# 环境变量与密钥（切勿提交）
+.env
+.env.local
+.env.*.local
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

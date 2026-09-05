@@ -1,0 +1,73 @@
+{
+  "name": "literag",
+  "version": "1.1.0",
+  "description": "LiteRAG · 智能客服 RAG Agent：DeepSeek 驱动，FAQ 问答库 + 文档知识库（RAG）+ 语义混合检索 + 意图识别 + 转人工 + 满意度统计",
+  "type": "module",
+  "engines": {
+    "node": ">=21.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agaziki/LiteRAG.git"
+  },
+  "homepage": "https://github.com/agaziki/LiteRAG#readme",
+  "bugs": {
+    "url": "https://github.com/agaziki/LiteRAG/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "rag",
+    "customer-service",
+    "deepseek",
+    "chatbot",
+    "embeddings",
+    "faq",
+    "sse"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && vite build",
+    "preview": "vite preview",
+    "start": "tsx server/index.ts",
+    "test": "tsx scripts/faq-test.ts && tsx scripts/faq-import-test.ts && tsx scripts/kb-docs-test.ts && tsx scripts/vision-test.ts",
+    "embed:check": "tsx scripts/embed-check.ts"
+  },
+  "dependencies": {
+    "@tdesign-react/aigc": "^0.1.0-alpha.1",
+    "@tdesign-react/chat": "^1.0.2",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.2",
+    "libsql": "^0.5.29",
+    "lucide-react": "^0.563.0",
+    "mammoth": "^1.12.2",
+    "multer": "^2.3.0",
+    "openai": "^7.5.0",
+    "pdfjs-dist": "^4.10.38",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.13.0",
+    "tdesign-icons-react": "^0.5.0",
+    "tdesign-react": "^1.12.0",
+    "tsx": "^4.6.2",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/uuid": "^9.0.7",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^8.2.2",
+    "less": "^4.3.0",
+    "pdf-lib": "^1.17.1",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.3.2",
+    "vite": "^5.0.10"
+  }
+}
