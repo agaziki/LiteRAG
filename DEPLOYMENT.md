@@ -1,5 +1,7 @@
 # LiteRAG 部署指南
 
+> 使用宝塔面板部署？见专属指南 [BAOTA-DEPLOYMENT.md](./BAOTA-DEPLOYMENT.md)。
+
 ## 1. 环境要求
 
 | 项 | 要求 |
