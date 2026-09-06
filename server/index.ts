@@ -934,6 +934,49 @@ app.post("/api/admin/topic-boundary", (req, res) => {
   res.json({ success: true, mode });
 });
 
+// ============= 图片工具（视觉模型辅助） =============
+
+const PRIVATE_HOST_RE = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.0\.0\.0|\[::1\]|\[fc|fd|fe80)/i;
+
+// 抓取网页图片转为 data URL（网页图片拖拽入对话时使用；浏览器跨域限制需服务端中转）
+app.post("/api/utils/fetch-image", async (req, res) => {
+  try {
+    const url = String(req.body?.url || "");
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return res.status(400).json({ error: "无效的图片 URL" });
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return res.status(400).json({ error: "仅支持 http/https 图片地址" });
+    }
+    // SSRF 防护：拦截内网/本机地址
+    if (PRIVATE_HOST_RE.test(parsed.hostname)) {
+      return res.status(400).json({ error: "不允许访问内网地址" });
+    }
+    const resp = await fetch(parsed.href, {
+      signal: AbortSignal.timeout(10_000),
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; LiteRAG/1.2)" },
+      redirect: "follow",
+    });
+    if (!resp.ok) return res.status(400).json({ error: `图片获取失败（HTTP ${resp.status}）` });
+    const contentType = resp.headers.get("content-type") || "";
+    if (!contentType.startsWith("image/")) {
+      return res.status(400).json({ error: `链接返回的不是图片（${contentType.split(";")[0]}）` });
+    }
+    const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: "图片超过 5MB" });
+    }
+    const mime = contentType.split(";")[0];
+    res.json({ success: true, dataUrl: `data:${mime};base64,${buf.toString("base64")}` });
+  } catch (error: any) {
+    const msg = error?.name === "TimeoutError" ? "图片获取超时" : (error?.message || "图片获取失败");
+    res.status(400).json({ error: msg });
+  }
+});
+
 // 启动服务器
 app.listen(PORT, () => {
   console.log(`

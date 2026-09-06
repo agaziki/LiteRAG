@@ -418,25 +418,33 @@ export function FaqManager() {
             </span>
           </span>
         }
-        actions={
-          <div className="flex items-center gap-2">
-            <input
-              ref={docInputRef}
-              type="file"
-              accept=".txt,.md,.markdown,.docx,.pdf"
-              className="hidden"
-              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadDoc(f); }}
-            />
-            <Button size="small" variant="outline" loading={docUploading} onClick={() => docInputRef.current?.click()}>
-              <FilePlus2 size={13} style={{ marginRight: 4 }} />
-              上传文档
-            </Button>
-          </div>
-        }
       >
+        {/* 上传工具栏（内容区常驻，确保按钮始终可见） */}
+        <div className="flex items-center gap-2 mb-3 flex-wrap">
+          <input
+            ref={docInputRef}
+            type="file"
+            accept=".txt,.md,.markdown,.docx,.pdf"
+            multiple
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              (async () => { for (const f of files) await uploadDoc(f); })();
+              e.target.value = '';
+            }}
+          />
+          <Button size="small" theme="primary" variant="outline" loading={docUploading} onClick={() => docInputRef.current?.click()}>
+            <FilePlus2 size={13} style={{ marginRight: 4 }} />
+            上传文档
+          </Button>
+          <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            支持 Word(.docx) / PDF / TXT / Markdown，单文件 ≤20MB，同名文档自动替换
+          </span>
+        </div>
+
         {docs.length === 0 ? (
           <div className="text-xs py-2" style={{ color: 'var(--td-text-color-secondary)' }}>
-            暂无文档。上传 Word(.docx) / PDF / TXT / Markdown 后自动切块入库，检索时与 FAQ 条目融合排序，AI 回答会注明文档出处。
+            暂无文档。上传后自动切块入库，检索时与 FAQ 条目融合排序，AI 回答会注明文档出处。
           </div>
         ) : (
           <div className="space-y-2">
