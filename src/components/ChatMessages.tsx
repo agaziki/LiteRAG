@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Loading } from 'tdesign-react';
+import { Loading, Tag } from 'tdesign-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
-import { User, Bot } from 'lucide-react';
+import { User, Bot, UserCheck } from 'lucide-react';
 import { Message, Model, ContentBlock } from '../types';
 import { ToolCallsCollapse } from './ToolCallsCollapse';
 import { RatingStars } from './RatingStars';
@@ -12,6 +12,8 @@ interface ChatMessagesProps {
   models: Model[];
   messagesEndRef: React.RefObject<HTMLDivElement>;
   sessionId?: string;
+  /** 转人工状态/人工回复变化时刷新会话消息 */
+  onRefreshMessages?: (sessionId: string) => void;
 }
 
 export function ChatMessages({
@@ -19,6 +21,7 @@ export function ChatMessages({
   models,
   messagesEndRef,
   sessionId,
+  onRefreshMessages,
 }: ChatMessagesProps) {
   const [refreshKey, setRefreshKey] = useState(0);
   // 图片灯箱预览
@@ -125,9 +128,9 @@ export function ChatMessages({
     );
   };
 
-  // 最后一条已完成的助手消息（用于显示满意度评价）
+  // 最后一条已完成的助手消息（用于显示满意度评价；人工客服回复不参与评价）
   const lastAssistantId = [...messages].reverse().find(
-    m => m.role === 'assistant' && !m.isStreaming
+    m => m.role === 'assistant' && !m.isStreaming && m.model !== 'human-agent'
   )?.id;
 
   return (
@@ -154,14 +157,14 @@ export function ChatMessages({
             className={`flex flex-col gap-2 max-w-[80%] ${message.role === 'user' ? 'items-end' : ''}`}
           >
             {message.role === 'assistant' && message.model && (
-              <span 
+              <span
                 className="text-xs"
                 style={{ color: 'var(--td-text-color-placeholder)' }}
               >
-                {formatModelName(message.model)}
+                {message.model === 'human-agent' ? '人工客服' : formatModelName(message.model)}
               </span>
             )}
-            
+
             {/* 用户消息：图片 + 文本 */}
             {message.role === 'user' && (
               <div className="flex flex-col items-end gap-1">
@@ -193,9 +196,30 @@ export function ChatMessages({
                 )}
               </div>
             )}
-            
-            {/* 助手消息 - 按顺序渲染内容块 */}
-            {message.role === 'assistant' && renderAssistantContent(message)}
+
+            {/* 人工客服回复：特殊样式渲染 */}
+            {message.role === 'assistant' && message.model === 'human-agent' && (
+              <div
+                className="px-4 py-3 leading-relaxed break-words"
+                style={{
+                  backgroundColor: 'rgba(43, 164, 113, 0.08)',
+                  border: '1px solid rgba(43, 164, 113, 0.3)',
+                  color: 'var(--td-text-color-primary)',
+                  borderRadius: '16px 16px 16px 4px'
+                }}
+              >
+                <Tag size="small" theme="success" style={{ marginBottom: 4 }}>
+                  <UserCheck size={10} style={{ marginRight: 3, verticalAlign: 'middle' }} />
+                  人工客服回复
+                </Tag>
+                <div className="chat-markdown">
+                  <ChatMarkdown content={message.content} />
+                </div>
+              </div>
+            )}
+
+            {/* 助手消息 - 按顺序渲染内容块（人工回复已在上方单独渲染） */}
+            {message.role === 'assistant' && message.model !== 'human-agent' && renderAssistantContent(message)}
             
             {/* 思考中状态（没有任何内容时显示） */}
             {message.role === 'assistant' && message.isStreaming && 
@@ -226,10 +250,14 @@ export function ChatMessages({
         </div>
       ))}
       
-      {/* 转人工提示横幅 */}
+      {/* 转人工提示横幅（状态自动轮询，人工回复新增时触发消息刷新） */}
       {sessionId && messages.length > 0 && (
         <div className="max-w-3xl mx-auto w-full ml-12">
-          <EscalationBanner sessionId={sessionId} refreshKey={refreshKey} />
+          <EscalationBanner
+            sessionId={sessionId}
+            refreshKey={refreshKey}
+            onUpdate={() => sessionId && onRefreshMessages?.(sessionId)}
+          />
         </div>
       )}
 

@@ -16,6 +16,7 @@ interface ChatPageProps {
   onStop: () => void;
   onInputChange: (value: string) => void;
   onModelChange: (modelId: string) => void;
+  onRefreshMessages: (sessionId: string) => void;
 }
 
 interface NewChatOptions {
@@ -33,6 +34,7 @@ export function ChatPage({
   onStop,
   onInputChange,
   onModelChange,
+  onRefreshMessages,
 }: ChatPageProps) {
   const navigate = useNavigate();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -79,6 +81,7 @@ export function ChatPage({
             models={models}
             messagesEndRef={messagesEndRef}
             sessionId={currentSession.id}
+            onRefreshMessages={onRefreshMessages}
           />
         )}
       </div>

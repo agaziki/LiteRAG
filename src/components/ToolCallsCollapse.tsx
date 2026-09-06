@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState } from 'react';
 import { Loading } from 'tdesign-react';
 import {
   ChevronDownIcon,
@@ -6,24 +6,7 @@ import {
   CheckCircleFilledIcon,
   CloseCircleFilledIcon,
 } from 'tdesign-icons-react';
-import { 
-  Terminal, 
-  Sparkles, 
-  Search, 
-  Globe, 
-  Wrench,
-  FileText,
-  Code,
-  FolderSearch,
-  Edit,
-  Trash2,
-  Eye,
-  Image,
-  MessageSquare,
-  Database,
-  Settings,
-  Zap
-} from 'lucide-react';
+import { Search, UserCheck, Tag, Brain, Wrench } from 'lucide-react';
 import { ToolCall } from '../types';
 
 interface ToolCallsCollapseProps {
@@ -31,737 +14,207 @@ interface ToolCallsCollapseProps {
   isStreaming?: boolean;
 }
 
-// 工具图标映射 - 根据 SDK 实际返回的工具名（截图显示为 PascalCase）
-const getToolIcon = (toolName: string) => {
-  const name = toolName.toLowerCase();
-  
-  // Skill 技能调用
-  if (name === 'skill') {
-    return { icon: Sparkles, color: 'var(--td-warning-color)' };
-  }
-  // Bash 命令执行
-  if (name === 'bash') {
-    return { icon: Terminal, color: 'var(--td-text-color-secondary)' };
-  }
-  // Web 搜索
-  if (name === 'websearch') {
-    return { icon: Search, color: '#1890ff' };
-  }
-  // Web 抓取
-  if (name === 'webfetch') {
-    return { icon: Globe, color: '#52c41a' };
-  }
-  // 写入文件
-  if (name === 'write') {
-    return { icon: FileText, color: '#fa8c16' };
-  }
-  // 读取文件
-  if (name === 'read' || name === 'readfile') {
-    return { icon: Eye, color: '#722ed1' };
-  }
-  // 编辑文件
-  if (name === 'edit' || name === 'editfile') {
-    return { icon: Edit, color: '#fa8c16' };
-  }
-  // 删除文件
-  if (name === 'delete' || name === 'deletefile') {
-    return { icon: Trash2, color: '#ff4d4f' };
-  }
-  // 搜索
-  if (name === 'search' || name === 'grep') {
-    return { icon: FolderSearch, color: '#13c2c2' };
-  }
-  // 列出目录
-  if (name === 'listdir' || name === 'ls') {
-    return { icon: FolderSearch, color: '#13c2c2' };
-  }
-  // 图片生成
-  if (name === 'imagegen') {
-    return { icon: Image, color: '#f5222d' };
-  }
-  // 任务
-  if (name === 'task') {
-    return { icon: Zap, color: '#faad14' };
-  }
-  
-  // 默认图标
-  return { icon: Wrench, color: 'var(--td-text-color-secondary)' };
+const INTENT_LABELS: Record<string, string> = {
+  refund: '退款',
+  order: '查询订单',
+  tech: '技术支持',
+  general: '通用咨询',
+  other: '其他',
 };
 
-// 获取工具类型标识（用于汇总显示）
-const getToolType = (toolName: string): string => {
-  const name = toolName.toLowerCase();
-  
-  if (name === 'skill') return 'skill';
-  if (name === 'bash') return 'bash';
-  if (name === 'websearch') return 'websearch';
-  if (name === 'webfetch') return 'webfetch';
-  if (name === 'write') return 'write';
-  if (name === 'read' || name === 'readfile') return 'read';
-  if (name === 'edit' || name === 'editfile') return 'edit';
-  if (name === 'delete' || name === 'deletefile') return 'delete';
-  if (name === 'search' || name === 'grep' || name === 'listdir') return 'search';
-  if (name === 'imagegen') return 'image';
-  if (name === 'task') return 'task';
-  
-  return 'other';
-};
+interface StepView {
+  icon: typeof Search;
+  color: string;
+  /** 人类可读的动作描述（思考链主干） */
+  action: string;
+  /** 人类可读的结果摘要（完成态展示） */
+  result?: string;
+  /** 原始参数/结果（默认折叠，调试用） */
+  raw?: string;
+  error?: boolean;
+}
+
+/** 把工具调用与结果翻译成人类可读的思考链步骤 */
+function toStepView(call: ToolCall): StepView {
+  const input = (call.input || {}) as Record<string, unknown>;
+  let parsedResult: any = null;
+  if (call.result) {
+    try { parsedResult = JSON.parse(call.result); } catch { parsedResult = null; }
+  }
+
+  switch (call.name) {
+    case 'search_faq': {
+      const query = String(input.query || '');
+      const count = parsedResult?.count;
+      let result: string | undefined;
+      if (call.status === 'completed' && parsedResult) {
+        const results = Array.isArray(parsedResult.results) ? parsedResult.results : [];
+        result = count > 0
+          ? `命中 ${count} 条：${results.slice(0, 2).map((r: any) => r.question).join('；')}${count > 2 ? ' 等' : ''}`
+          : '未检索到相关内容，将基于常识回答并建议转人工';
+      }
+      return {
+        icon: Search,
+        color: 'var(--td-brand-color)',
+        action: query ? `检索知识库：“${query}”` : '检索知识库',
+        result,
+        raw: JSON.stringify({ 输入: input, 输出: parsedResult ?? call.result }, null, 2),
+        error: call.status === 'error',
+      };
+    }
+    case 'record_intent': {
+      const intent = INTENT_LABELS[String(input.intent)] || String(input.intent || '');
+      const confidence = input.confidence ? `（置信度：${input.confidence}）` : '';
+      return {
+        icon: Tag,
+        color: '#7b61ff',
+        action: `识别用户意图：${intent}${confidence}`,
+        result: call.status === 'completed' ? '已记录' : undefined,
+        raw: JSON.stringify({ 输入: input, 输出: parsedResult ?? call.result }, null, 2),
+        error: call.status === 'error',
+      };
+    }
+    case 'escalate_to_human': {
+      const reason = String(input.reason || '用户需要人工服务');
+      const intent = input.intent ? INTENT_LABELS[String(input.intent)] || String(input.intent) : '';
+      return {
+        icon: UserCheck,
+        color: '#e37318',
+        action: `转接人工客服：${reason}${intent ? `（意图：${intent}）` : ''}`,
+        result: call.status === 'completed' ? '已创建转人工工单，等待人工接入' : undefined,
+        raw: JSON.stringify({ 输入: input, 输出: parsedResult ?? call.result }, null, 2),
+        error: call.status === 'error',
+      };
+    }
+    default: {
+      // 未知工具的通用回退
+      const inputSummary = Object.entries(input)
+        .map(([k, v]) => `${k}=${typeof v === 'string' ? v.slice(0, 40) : JSON.stringify(v)?.slice(0, 40)}`)
+        .join('，');
+      return {
+        icon: Wrench,
+        color: 'var(--td-text-color-secondary)',
+        action: `调用工具 ${call.name}${inputSummary ? `：${inputSummary}` : ''}`,
+        result: call.status === 'completed' && parsedResult?.success !== undefined ? '已完成' : undefined,
+        raw: JSON.stringify({ 输入: input, 输出: parsedResult ?? call.result }, null, 2),
+        error: call.status === 'error',
+      };
+    }
+  }
+}
 
 export function ToolCallsCollapse({ toolCalls, isStreaming = false }: ToolCallsCollapseProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  // 可折叠工具的展开状态（按 toolId 管理）
-  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(new Set());
-  
-  // 切换工具的展开状态
-  const toggleToolExpanded = (toolId: string) => {
-    setExpandedToolIds(prev => {
-      const next = new Set(prev);
-      if (next.has(toolId)) {
-        next.delete(toolId);
-      } else {
-        next.add(toolId);
-      }
-      return next;
-    });
-  };
-  
-  // 是否所有工具都已完成
-  const allCompleted = toolCalls.every(tool => tool.status === 'completed' || tool.status === 'error');
-  
-  // 是否有任何工具正在运行
-  const hasRunning = toolCalls.some(tool => tool.status === 'running');
-  
-  // 是否有失败的工具
-  const hasError = toolCalls.some(tool => tool.status === 'error');
-  
-  // 汇总工具类型（去重）
-  const toolSummary = useMemo(() => {
-    const typeMap = new Map<string, { icon: any; color: string; count: number }>();
-    toolCalls.forEach(tool => {
-      const type = getToolType(tool.name);
-      const { icon, color } = getToolIcon(tool.name);
-      if (typeMap.has(type)) {
-        typeMap.get(type)!.count++;
-      } else {
-        typeMap.set(type, { icon, color, count: 1 });
-      }
-    });
-    return Array.from(typeMap.entries()).map(([type, info]) => ({
-      type,
-      ...info
-    }));
-  }, [toolCalls]);
-  
-  // 找到最新的正在运行的工具（用于连续调用时展示）
-  const latestRunningTool = useMemo(() => {
-    for (let i = toolCalls.length - 1; i >= 0; i--) {
-      if (toolCalls[i].status === 'running') {
-        return { tool: toolCalls[i], index: i };
-      }
-    }
-    return null;
-  }, [toolCalls]);
-  
-  // 当有新的工具调用开始时，如果之前是展开状态且所有都完成了，保持折叠
-  useEffect(() => {
-    if (toolCalls.length === 1 && hasRunning) {
-      setIsExpanded(true);
-    } else if (allCompleted && !isStreaming) {
-      setIsExpanded(false);
-    }
-  }, [toolCalls.length, hasRunning, allCompleted, isStreaming]);
 
-  // 渲染单个工具调用详情
-  const renderToolDetail = (tool: ToolCall, index: number) => {
-    const isRunning = tool.status === 'running';
-    const isCompleted = tool.status === 'completed';
-    const isError = tool.status === 'error' || tool.isError;
-    
-    const input = tool.input || {};
-    const { icon: ToolIcon, color: iconColor } = getToolIcon(tool.name);
-    const toolExpanded = expandedToolIds.has(tool.id);
-    
-    // 判断工具类型 - 根据截图实际的工具名（PascalCase）
-    const toolNameLower = tool.name.toLowerCase();
-    const isSkill = toolNameLower === 'skill';
-    const isBash = toolNameLower === 'bash';
-    const isWebSearch = toolNameLower === 'websearch';
-    const isWebFetch = toolNameLower === 'webfetch';
-    const isWrite = toolNameLower === 'write';
-    
-    // Skill 工具的特殊渲染
-    // 标题: 使用 {skill名称} 技能，内容: args
-    if (isSkill) {
-      const skillName = (input.skill || 'Unknown') as string;
-      const skillArgs = (input.args || '') as string;
-      
-      return (
-        <div
-          key={tool.id}
-          className="rounded-lg overflow-hidden transition-all"
-          style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-        >
-          <div className="flex items-center gap-2 px-3 py-2">
-            {isRunning ? (
-              <Loading size="small" />
-            ) : isCompleted && !isError ? (
-              <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-            ) : (
-              <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-            )}
-            <ToolIcon size={16} style={{ color: iconColor }} />
-            <span
-              className="flex-1 text-sm font-medium"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              使用 <span style={{ color: 'var(--td-brand-color)' }}>{skillName}</span> 技能
-            </span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {isRunning ? '执行中...' : isError ? '失败' : '完成'}
-            </span>
-          </div>
-          
-          {skillArgs && (
-            <div
-              className="px-3 py-2 text-xs whitespace-pre-wrap break-all max-h-24 overflow-y-auto border-t"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              {String(skillArgs).length > 300 ? String(skillArgs).slice(0, 300) + '...' : String(skillArgs)}
-            </div>
-          )}
-          
-          {tool.result && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '结果: '}</span>
-              {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-            </div>
-          )}
-        </div>
-      );
-    }
-    
-    // Bash 工具的特殊渲染
-    // 标题: description，展开后显示: command
-    if (isBash) {
-      const command = (input.command || '') as string;
-      const description = (input.description || '执行命令') as string;
-      
-      return (
-        <div
-          key={tool.id}
-          className="rounded-lg overflow-hidden transition-all"
-          style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-        >
-          <div 
-            className="flex items-center gap-2 px-3 py-2 cursor-pointer"
-            onClick={() => toggleToolExpanded(tool.id)}
-          >
-            {isRunning ? (
-              <Loading size="small" />
-            ) : isCompleted && !isError ? (
-              <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-            ) : (
-              <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-            )}
-            <ToolIcon size={16} style={{ color: iconColor }} />
-            <span
-              className="flex-1 text-sm font-medium truncate"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              {description || '执行命令'}
-            </span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {isRunning ? '执行中...' : isError ? '失败' : '完成'}
-            </span>
-            {command && (
-              toolExpanded ? (
-                <ChevronUpIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              ) : (
-                <ChevronDownIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              )
-            )}
-          </div>
-          
-          {toolExpanded && command && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>$ </span>
-              {command.length > 500 ? command.slice(0, 500) + '...' : command}
-            </div>
-          )}
-          
-          {tool.result && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '输出: '}</span>
-              {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-            </div>
-          )}
-        </div>
-      );
-    }
-    
-    // WebSearch 工具的特殊渲染
-    // 标题: 搜索 {query}
-    if (isWebSearch) {
-      const query = (input.query || '') as string;
-      
-      return (
-        <div
-          key={tool.id}
-          className="rounded-lg overflow-hidden transition-all"
-          style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-        >
-          <div className="flex items-center gap-2 px-3 py-2">
-            {isRunning ? (
-              <Loading size="small" />
-            ) : isCompleted && !isError ? (
-              <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-            ) : (
-              <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-            )}
-            <ToolIcon size={16} style={{ color: iconColor }} />
-            <span
-              className="flex-1 text-sm font-medium"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              搜索: <span style={{ color: '#1890ff' }}>{query || '...'}</span>
-            </span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {isRunning ? '搜索中...' : isError ? '失败' : '完成'}
-            </span>
-          </div>
-          
-          {tool.result && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '结果: '}</span>
-              {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-            </div>
-          )}
-        </div>
-      );
-    }
-    
-    // WebFetch 工具的特殊渲染
-    // 标题: prompt（获取目的），展开显示: url
-    if (isWebFetch) {
-      const url = (input.url || '') as string;
-      const prompt = (input.prompt || '获取网页内容') as string;
-      
-      return (
-        <div
-          key={tool.id}
-          className="rounded-lg overflow-hidden transition-all"
-          style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-        >
-          <div 
-            className="flex items-center gap-2 px-3 py-2 cursor-pointer"
-            onClick={() => toggleToolExpanded(tool.id)}
-          >
-            {isRunning ? (
-              <Loading size="small" />
-            ) : isCompleted && !isError ? (
-              <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-            ) : (
-              <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-            )}
-            <ToolIcon size={16} style={{ color: iconColor }} />
-            <span
-              className="flex-1 text-sm font-medium truncate"
-              style={{ color: 'var(--td-text-color-primary)' }}
-            >
-              {prompt}
-            </span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {isRunning ? '获取中...' : isError ? '失败' : '完成'}
-            </span>
-            {url && (
-              toolExpanded ? (
-                <ChevronUpIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              ) : (
-                <ChevronDownIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              )
-            )}
-          </div>
-          
-          {/* 展开显示 URL */}
-          {toolExpanded && url && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all border-t"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>URL: </span>
-              {url}
-            </div>
-          )}
-          
-          {tool.result && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '内容: '}</span>
-              {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-            </div>
-          )}
-        </div>
-      );
-    }
-    
-    // Write 工具的特殊渲染
-    // 标题: file_path，展开显示: content
-    if (isWrite) {
-      const filePath = (input.file_path || '') as string;
-      const content = (input.content || '') as string;
-      // 提取文件名
-      const fileName = filePath.split('/').pop() || filePath;
-      
-      return (
-        <div
-          key={tool.id}
-          className="rounded-lg overflow-hidden transition-all"
-          style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-        >
-          <div 
-            className="flex items-center gap-2 px-3 py-2 cursor-pointer"
-            onClick={() => toggleToolExpanded(tool.id)}
-          >
-            {isRunning ? (
-              <Loading size="small" />
-            ) : isCompleted && !isError ? (
-              <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-            ) : (
-              <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-            )}
-            <ToolIcon size={16} style={{ color: iconColor }} />
-            <span
-              className="flex-1 text-sm font-medium truncate"
-              style={{ color: 'var(--td-text-color-primary)' }}
-              title={filePath}
-            >
-              写入 <span style={{ color: '#fa8c16' }}>{fileName}</span>
-            </span>
-            <span
-              className="text-xs"
-              style={{ color: 'var(--td-text-color-placeholder)' }}
-            >
-              {isRunning ? '写入中...' : isError ? '失败' : '完成'}
-            </span>
-            {content && (
-              toolExpanded ? (
-                <ChevronUpIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              ) : (
-                <ChevronDownIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              )
-            )}
-          </div>
-          
-          {/* 展开显示完整路径和内容 */}
-          {toolExpanded && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-48 overflow-y-auto border-t"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <div className="mb-2" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                路径: {filePath}
-              </div>
-              {content && (
-                <div>
-                  <span style={{ color: 'var(--td-text-color-placeholder)' }}>内容:</span>
-                  <pre className="mt-1 whitespace-pre-wrap">
-                    {content.length > 1000 ? content.slice(0, 1000) + '...' : content}
-                  </pre>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {tool.result && (
-            <div
-              className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-              style={{
-                color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-                borderColor: 'var(--td-component-stroke)',
-                backgroundColor: 'var(--td-bg-color-container)',
-              }}
-            >
-              <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '结果: '}</span>
-              {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-            </div>
-          )}
-        </div>
-      );
-    }
-    
-    // 默认工具渲染（其他工具）
-    const formatInput = (inputObj: Record<string, unknown> | undefined) => {
-      if (!inputObj || Object.keys(inputObj).length === 0) return null;
-      try {
-        return JSON.stringify(inputObj, null, 2);
-      } catch {
-        return String(inputObj);
-      }
-    };
-    
-    const inputStr = formatInput(tool.input);
-    
-    return (
-      <div
-        key={tool.id}
-        className="rounded-lg overflow-hidden transition-all"
-        style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-      >
-        <div className="flex items-center gap-2 px-3 py-2">
-          {isRunning ? (
-            <Loading size="small" />
-          ) : isCompleted && !isError ? (
-            <CheckCircleFilledIcon style={{ color: 'var(--td-success-color)' }} />
-          ) : (
-            <CloseCircleFilledIcon style={{ color: 'var(--td-error-color)' }} />
-          )}
-          <ToolIcon size={16} style={{ color: iconColor }} />
-          <span
-            className="flex-1 text-sm font-medium truncate"
-            style={{ color: 'var(--td-text-color-primary)' }}
-          >
-            {tool.name}
-          </span>
-          <span
-            className="text-xs"
-            style={{ color: 'var(--td-text-color-placeholder)' }}
-          >
-            {isRunning ? '执行中...' : isError ? '失败' : '完成'}
-          </span>
-        </div>
-        
-        {inputStr && (
-          <div
-            className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-24 overflow-y-auto border-t"
-            style={{
-              color: 'var(--td-text-color-secondary)',
-              borderColor: 'var(--td-component-stroke)',
-              backgroundColor: 'var(--td-bg-color-container)',
-            }}
-          >
-            <span style={{ color: 'var(--td-text-color-placeholder)' }}>输入: </span>
-            {inputStr.length > 300 ? inputStr.slice(0, 300) + '...' : inputStr}
-          </div>
-        )}
-        
-        {tool.result && (
-          <div
-            className="px-3 py-2 text-xs font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto border-t"
-            style={{
-              color: isError ? 'var(--td-error-color)' : 'var(--td-text-color-secondary)',
-              borderColor: 'var(--td-component-stroke)',
-              backgroundColor: 'var(--td-bg-color-container)',
-            }}
-          >
-            <span style={{ color: 'var(--td-text-color-placeholder)' }}>{isError ? '错误: ' : '结果: '}</span>
-            {tool.result.length > 500 ? tool.result.slice(0, 500) + '...' : tool.result}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // 渲染收缩横条（带工具汇总）
-  const renderCollapseBar = () => (
-    <div
-      className="flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer transition-all hover:opacity-80"
-      style={{ backgroundColor: 'var(--td-bg-color-component)' }}
-      onClick={() => setIsExpanded(!isExpanded)}
-    >
-      {/* 左侧：展开图标 + 状态图标 + 文字 + 数量 */}
-      <div className="flex items-center gap-1.5">
-        {isExpanded ? (
-          <ChevronUpIcon size={16} style={{ color: 'var(--td-text-color-secondary)' }} />
-        ) : (
-          <ChevronDownIcon size={16} style={{ color: 'var(--td-text-color-secondary)' }} />
-        )}
-        {hasRunning ? (
-          <Loading size="small" />
-        ) : hasError ? (
-          <CloseCircleFilledIcon size={16} style={{ color: 'var(--td-error-color)' }} />
-        ) : (
-          <CheckCircleFilledIcon size={16} style={{ color: 'var(--td-success-color)' }} />
-        )}
-        <span
-          className="text-sm"
-          style={{ color: 'var(--td-text-color-primary)' }}
-        >
-          {hasRunning ? '执行中...' : isExpanded ? '收起步骤' : '查看步骤'}
-        </span>
-        {toolCalls.length > 1 && (
-          <span
-            className="text-xs"
-            style={{ color: 'var(--td-text-color-placeholder)' }}
-          >
-            ({toolCalls.length})
-          </span>
-        )}
-      </div>
-      
-      {/* 右侧：工具图标汇总 */}
-      <div className="flex items-center gap-1">
-        {toolSummary.map(({ type, icon: Icon, color, count }) => (
-          <div 
-            key={type} 
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded"
-            style={{ backgroundColor: 'var(--td-bg-color-secondarycontainer)' }}
-            title={`${type} x${count}`}
-          >
-            <Icon size={12} style={{ color }} />
-            {count > 1 && (
-              <span 
-                className="text-xs"
-                style={{ color: 'var(--td-text-color-placeholder)', fontSize: '10px' }}
-              >
-                {count}
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-
-  // 渲染最新运行中的工具（用于连续调用场景）
-  const renderLatestRunningTool = () => {
-    if (!latestRunningTool) return null;
-    
-    const { tool, index } = latestRunningTool;
-    const previousCount = index;
-    
-    return (
-      <div className="space-y-2">
-        {previousCount > 0 && (
-          <div
-            className="flex items-center justify-between gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer transition-all hover:opacity-80"
-            style={{ backgroundColor: 'var(--td-bg-color-component)' }}
-            onClick={() => setIsExpanded(true)}
-          >
-            <div className="flex items-center gap-1.5">
-              <ChevronDownIcon size={14} style={{ color: 'var(--td-text-color-placeholder)' }} />
-              <CheckCircleFilledIcon size={14} style={{ color: 'var(--td-success-color)' }} />
-              <span
-                className="text-xs"
-                style={{ color: 'var(--td-text-color-secondary)' }}
-              >
-                {previousCount} 个步骤已完成
-              </span>
-            </div>
-            {/* 已完成工具的图标汇总 */}
-            <div className="flex items-center gap-1">
-              {toolSummary.slice(0, -1).map(({ type, icon: Icon, color }) => (
-                <Icon key={type} size={12} style={{ color }} />
-              ))}
-            </div>
-          </div>
-        )}
-        
-        {renderToolDetail(tool, index)}
-      </div>
-    );
-  };
-
-  // 单个工具调用的情况
-  if (toolCalls.length === 1) {
-    const tool = toolCalls[0];
-    
-    if (tool.status === 'running') {
-      return (
-        <div className="w-full">
-          {renderToolDetail(tool, 0)}
-        </div>
-      );
-    }
-    
-    return (
-      <div className="w-full space-y-2">
-        {renderCollapseBar()}
-        {isExpanded && (
-          <div className="space-y-2 pl-2">
-            {renderToolDetail(tool, 0)}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // 多个工具调用的情况
-  if (hasRunning && !isExpanded) {
-    return (
-      <div className="w-full">
-        {renderLatestRunningTool()}
-      </div>
-    );
-  }
+  const running = toolCalls.some(t => t.status === 'running');
+  const hasError = toolCalls.some(t => t.status === 'error');
+  const stepViews = toolCalls.map(toStepView);
 
   return (
-    <div className="w-full space-y-2">
-      {renderCollapseBar()}
+    <div
+      className="rounded-xl border overflow-hidden"
+      style={{
+        borderColor: hasError ? 'rgba(228, 77, 91, 0.3)' : 'var(--td-component-border)',
+        backgroundColor: 'var(--td-bg-color-page)',
+      }}
+    >
+      {/* 折叠头部：思考过程摘要 */}
+      <div
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none"
+        onClick={() => setIsExpanded(v => !v)}
+      >
+        {running ? (
+          <Loading size="small" />
+        ) : hasError ? (
+          <CloseCircleFilledIcon size="16px" style={{ color: 'var(--td-error-color)' }} />
+        ) : (
+          <CheckCircleFilledIcon size="16px" style={{ color: 'var(--td-success-color)' }} />
+        )}
+        <span className="text-xs font-medium flex items-center gap-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+          <Brain size={12} />
+          {running ? '正在思考…' : '思考过程'}
+        </span>
+        <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {stepViews.length} 个步骤
+          {isStreaming && running ? '，执行中' : ''}
+        </span>
+        <span className="ml-auto" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {isExpanded ? <ChevronUpIcon size="14px" /> : <ChevronDownIcon size="14px" />}
+        </span>
+      </div>
+
+      {/* 展开：思考链时间线 */}
       {isExpanded && (
-        <div className="space-y-2 pl-2">
-          {toolCalls.map((tool, index) => renderToolDetail(tool, index))}
+        <div className="px-3 pb-3">
+          <div className="relative pl-5">
+            {/* 时间线竖线 */}
+            <div
+              className="absolute left-[7px] top-2 bottom-2 w-px"
+              style={{ backgroundColor: 'var(--td-component-border)' }}
+            />
+            {stepViews.map((step, idx) => {
+              const Icon = step.icon;
+              const isStepRunning = toolCalls[idx]?.status === 'running';
+              const isStepError = step.error;
+              return (
+                <div key={toolCalls[idx]?.id || idx} className="relative py-1.5">
+                  {/* 节点圆点 */}
+                  <div
+                    className="absolute -left-5 top-2.5 w-[15px] h-[15px] rounded-full flex items-center justify-center"
+                    style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+                  >
+                    {isStepRunning ? (
+                      <Loading size="12px" />
+                    ) : isStepError ? (
+                      <CloseCircleFilledIcon size="14px" style={{ color: 'var(--td-error-color)' }} />
+                    ) : (
+                      <CheckCircleFilledIcon size="14px" style={{ color: 'var(--td-success-color)' }} />
+                    )}
+                  </div>
+                  <div className="flex items-start gap-1.5">
+                    <Icon size={13} style={{ color: step.color, marginTop: 2, flexShrink: 0 }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs leading-5" style={{ color: 'var(--td-text-color-primary)' }}>
+                        {step.action}
+                      </div>
+                      {step.result && (
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>
+                          → {step.result}
+                        </div>
+                      )}
+                      {isStepError && toolCalls[idx]?.result && (
+                        <div className="text-xs mt-0.5" style={{ color: 'var(--td-error-color)' }}>
+                          → 执行失败
+                        </div>
+                      )}
+                      {/* 原始数据（默认折叠） */}
+                      {step.raw && (
+                        <details className="mt-1">
+                          <summary
+                            className="text-xs cursor-pointer select-none"
+                            style={{ color: 'var(--td-text-color-placeholder)' }}
+                          >
+                            原始数据
+                          </summary>
+                          <pre
+                            className="text-[11px] mt-1 p-2 rounded overflow-auto max-h-40 whitespace-pre-wrap break-all"
+                            style={{
+                              backgroundColor: 'var(--td-bg-color-component)',
+                              color: 'var(--td-text-color-secondary)',
+                            }}
+                          >
+                            {step.raw}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
 }
-
-export default ToolCallsCollapse;

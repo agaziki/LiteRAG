@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Routes, Route, useNavigate, useParams, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import '@tdesign-react/chat/es/style/index.js';
 
 import { useAgents } from './hooks/useAgents';
@@ -10,7 +10,6 @@ import { useChat } from './hooks/useChat';
 
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
-import { SettingsPage } from './components/SettingsPage';
 import { ChatPage } from './pages/ChatPage';
 import { AdminPage } from './pages/AdminPage';
 
@@ -19,8 +18,10 @@ function App() {
     <Routes>
       <Route path="/" element={<AppContent />} />
       <Route path="/chat/:sessionId" element={<AppContent />} />
-      <Route path="/settings" element={<AppContent />} />
+      {/* 管理后台仅通过 /admin 直链访问（密码门控），普通用户界面无入口 */}
       <Route path="/admin" element={<AppContent />} />
+      <Route path="/settings" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
@@ -29,7 +30,6 @@ function AppContent() {
   const navigate = useNavigate();
   const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
-  const isSettingsPage = location.pathname === '/settings';
   const isAdminPage = location.pathname === '/admin';
 
   // Hooks
@@ -44,6 +44,7 @@ function AppContent() {
     currentSession,
     sessionModels,
     fetchSessions,
+    loadSessionMessages,
     deleteSession,
     updateSessionModel,
   } = useSessions();
@@ -72,10 +73,10 @@ function AppContent() {
   useEffect(() => {
     if (urlSessionId && urlSessionId !== currentSessionId) {
       setCurrentSessionId(urlSessionId);
-    } else if (!urlSessionId && !isSettingsPage && !isAdminPage && currentSessionId) {
+    } else if (!urlSessionId && !isAdminPage && currentSessionId) {
       setCurrentSessionId(null);
     }
-  }, [urlSessionId, isSettingsPage, isAdminPage, currentSessionId, setCurrentSessionId]);
+  }, [urlSessionId, isAdminPage, currentSessionId, setCurrentSessionId]);
 
   // 当切换会话时，恢复该会话的模型选择
   useEffect(() => {
@@ -118,14 +119,6 @@ function AppContent() {
     navigate(`/chat/${sessionId}`);
   }, [navigate, setCurrentSessionId]);
 
-  const handleOpenSettings = useCallback(() => {
-    navigate('/settings');
-  }, [navigate]);
-
-  const handleOpenAdmin = useCallback(() => {
-    navigate('/admin');
-  }, [navigate]);
-
   // Sidebar 状态
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -134,30 +127,26 @@ function AppContent() {
       className="flex h-screen w-screen"
       style={{ backgroundColor: 'var(--td-bg-color-page)' }}
     >
-      {/* 侧边栏 */}
-      <Sidebar
-        sessions={sessions}
-        currentSessionId={currentSessionId}
-        isSettingsPage={isSettingsPage}
-        isAdminPage={isAdminPage}
-        sidebarOpen={sidebarOpen}
-        agents={agents}
-        getAgent={getAgent}
-        onNewChat={handleNewChat}
-        onSelectSession={handleSelectSession}
-        onDeleteSession={handleDeleteSession}
-        onOpenSettings={handleOpenSettings}
-        onOpenAdmin={handleOpenAdmin}
-      />
+      {/* 侧边栏（管理后台下隐藏，普通用户界面无设置/后台入口） */}
+      {!isAdminPage && (
+        <Sidebar
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          sidebarOpen={sidebarOpen}
+          agents={agents}
+          getAgent={getAgent}
+          onNewChat={handleNewChat}
+          onSelectSession={handleSelectSession}
+          onDeleteSession={handleDeleteSession}
+        />
+      )}
 
       {/* 主内容区 */}
       <main
         className="flex-1 flex flex-col min-w-0"
         style={{ backgroundColor: 'var(--td-bg-color-page)' }}
       >
-        {/* 顶部栏 */}
         <Header
-          isSettingsPage={isSettingsPage}
           isAdminPage={isAdminPage}
           sidebarOpen={sidebarOpen}
           theme={theme}
@@ -169,16 +158,13 @@ function AppContent() {
           onRefreshModels={fetchModels}
         />
 
-        {/* 设置页面 / 管理后台 / 聊天页面 */}
-        {isSettingsPage ? (
-          <SettingsPage
+        {isAdminPage ? (
+          <AdminPage
             agents={agents}
             onAdd={addAgent}
             onUpdate={updateAgent}
             onDelete={deleteAgent}
           />
-        ) : isAdminPage ? (
-          <AdminPage />
         ) : (
           <ChatPage
             currentSession={currentSession}
@@ -191,6 +177,7 @@ function AppContent() {
             onStop={handleStop}
             onInputChange={setInputValue}
             onModelChange={updateCurrentSessionModel}
+            onRefreshMessages={loadSessionMessages}
           />
         )}
       </main>

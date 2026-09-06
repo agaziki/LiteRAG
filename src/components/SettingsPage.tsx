@@ -1,26 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Form,
-  Input,
-  Textarea,
-  Button,
-  Tooltip,
-  Popconfirm,
-  MessagePlugin,
-  Loading,
-  Tag
+  Form, Input, Textarea, Button, Tooltip, Popconfirm,
+  MessagePlugin, Loading, Tag, Radio,
 } from 'tdesign-react';
-import { 
-  AddIcon, 
-  EditIcon, 
-  DeleteIcon,
-  CheckIcon,
-  CheckCircleFilledIcon,
-  CloseCircleFilledIcon,
-  RefreshIcon
+import {
+  AddIcon, EditIcon, DeleteIcon, CheckIcon,
+  CheckCircleFilledIcon, CloseCircleFilledIcon, RefreshIcon
 } from 'tdesign-icons-react';
 import { Bot, Sparkles, Code, FileText, Globe, Lightbulb } from 'lucide-react';
 import { CustomAgent } from '../types';
+import { adminFetch, handleAuthExpired } from '../utils/adminAuth';
 
 interface SettingsPageProps {
   agents: CustomAgent[];
@@ -119,6 +108,11 @@ export function SettingsPage({
   });
   const [savingEnv, setSavingEnv] = useState(false);
 
+  // 话题边界策略（strict=温和 / open=开放）
+  const [topicBoundary, setTopicBoundary] = useState<'strict' | 'open'>('strict');
+  const [topicLoading, setTopicLoading] = useState(false);
+  const [topicSaving, setTopicSaving] = useState(false);
+
   // 检查登录状态
   const checkLoginStatus = useCallback(async () => {
     setLoginStatus(prev => ({ ...prev, checking: true, error: undefined }));
@@ -185,6 +179,46 @@ export function SettingsPage({
   useEffect(() => {
     checkLoginStatus();
   }, [checkLoginStatus]);
+
+  // 加载话题边界策略
+  useEffect(() => {
+    (async () => {
+      try {
+        setTopicLoading(true);
+        const res = await adminFetch('/api/admin/topic-boundary');
+        if (handleAuthExpired(res)) return;
+        const data = await res.json();
+        if (data.mode === 'strict' || data.mode === 'open') setTopicBoundary(data.mode);
+      } catch {
+        // 静默
+      } finally {
+        setTopicLoading(false);
+      }
+    })();
+  }, []);
+
+  const saveTopicBoundary = useCallback(async (mode: 'strict' | 'open') => {
+    setTopicSaving(true);
+    try {
+      const res = await adminFetch('/api/admin/topic-boundary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      if (handleAuthExpired(res)) return;
+      const data = await res.json();
+      if (data.success) {
+        setTopicBoundary(data.mode);
+        MessagePlugin.success(data.mode === 'strict' ? '已切换为温和模式（仅解答购物售后相关问题）' : '已切换为开放模式（通用问题照答，业务事实检索优先）');
+      } else {
+        MessagePlugin.error(data.error || '保存失败');
+      }
+    } catch {
+      MessagePlugin.error('网络错误，保存失败');
+    } finally {
+      setTopicSaving(false);
+    }
+  }, []);
 
   const resetForm = () => {
     setFormData({
@@ -424,11 +458,61 @@ export function SettingsPage({
           )}
         </div>
 
-        <div 
-          style={{ 
-            height: '1px', 
-            backgroundColor: 'var(--td-component-border)' 
-          }} 
+        {/* 话题边界策略 */}
+        <div>
+          <div className="mb-4">
+            <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+              话题边界策略
+            </h2>
+            <p className="text-sm mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+              控制智能客服面对无关话题时的应答方式（即时生效，影响默认客服 Agent）
+            </p>
+          </div>
+          <Radio.Group
+            value={topicBoundary}
+            onChange={(v) => saveTopicBoundary(v as 'strict' | 'open')}
+            disabled={topicLoading || topicSaving}
+          >
+            <div className="space-y-3">
+              <div
+                className="p-3 rounded-lg cursor-pointer border"
+                style={{
+                  borderColor: topicBoundary === 'strict' ? 'var(--td-brand-color)' : 'var(--td-component-border)',
+                  backgroundColor: topicBoundary === 'strict' ? 'var(--td-brand-color-light)' : 'transparent',
+                }}
+                onClick={() => topicBoundary !== 'strict' && saveTopicBoundary('strict')}
+              >
+                <Radio value="strict"><span className="font-medium">温和模式（推荐企业正式客服）</span></Radio>
+                <div className="text-xs mt-1 ml-6" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  无关话题时礼貌说明「我是本店智能客服，仅能解答购物售后相关问题」，并引导用户回到业务
+                </div>
+              </div>
+              <div
+                className="p-3 rounded-lg cursor-pointer border"
+                style={{
+                  borderColor: topicBoundary === 'open' ? 'var(--td-brand-color)' : 'var(--td-component-border)',
+                  backgroundColor: topicBoundary === 'open' ? 'var(--td-brand-color-light)' : 'transparent',
+                }}
+                onClick={() => topicBoundary !== 'open' && saveTopicBoundary('open')}
+              >
+                <Radio value="open"><span className="font-medium">开放模式（通用助手场景）</span></Radio>
+                <div className="text-xs mt-1 ml-6" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  通用问题照答；业务事实层面坚持检索优先、不编造、检索不到时兜底转人工
+                </div>
+              </div>
+            </div>
+          </Radio.Group>
+          {topicSaving && <div className="text-xs mt-2" style={{ color: 'var(--td-text-color-secondary)' }}>保存中…</div>}
+          <div className="text-xs mt-2" style={{ color: 'var(--td-text-color-placeholder)' }}>
+            默认值由 .env 的 TOPIC_BOUNDARY（strict/open）决定；显式设置环境变量后，重启将回到环境变量值
+          </div>
+        </div>
+
+        <div
+          style={{
+            height: '1px',
+            backgroundColor: 'var(--td-component-border)'
+          }}
         />
 
         {/* Agent 配置 */}

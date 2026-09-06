@@ -1,5 +1,5 @@
 import { Button, Tooltip } from 'tdesign-react';
-import { AddIcon, DeleteIcon, SettingIcon, DashboardIcon } from 'tdesign-icons-react';
+import { AddIcon, DeleteIcon } from 'tdesign-icons-react';
 import { Bot } from 'lucide-react';
 import { APP_CONFIG } from '../config';
 import { Session, Agent } from '../types';
@@ -8,36 +8,28 @@ import { ICON_MAP } from '../utils/iconMap';
 interface SidebarProps {
   sessions: Session[];
   currentSessionId: string | null;
-  isSettingsPage: boolean;
-  isAdminPage: boolean;
   sidebarOpen: boolean;
   agents: Agent[];
   getAgent: (id: string) => Agent | undefined;
   onNewChat: () => void;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
-  onOpenSettings: () => void;
-  onOpenAdmin: () => void;
 }
 
 export function Sidebar({
   sessions,
   currentSessionId,
-  isSettingsPage,
-  isAdminPage,
   sidebarOpen,
   agents,
   getAgent,
   onNewChat,
   onSelectSession,
   onDeleteSession,
-  onOpenSettings,
-  onOpenAdmin,
 }: SidebarProps) {
   return (
-    <aside 
+    <aside
       className="flex flex-col flex-shrink-0 transition-all duration-300 overflow-hidden"
-      style={{ 
+      style={{
         width: sidebarOpen ? 260 : 0,
         backgroundColor: 'var(--td-bg-color-container)'
       }}
@@ -45,13 +37,13 @@ export function Sidebar({
       {/* Logo */}
       <div className="h-14 px-4 flex items-center flex-shrink-0">
         <div className="flex items-center gap-2.5">
-          <div 
+          <div
             className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ backgroundColor: 'var(--td-brand-color)' }}
           >
             <span className="text-white text-sm font-bold">{APP_CONFIG.nameInitial}</span>
           </div>
-          <span 
+          <span
             className="text-lg font-semibold"
             style={{ color: 'var(--td-text-color-primary)' }}
           >
@@ -62,7 +54,7 @@ export function Sidebar({
 
       {/* 新对话按钮 */}
       <div className="p-3">
-        <Button 
+        <Button
           icon={<AddIcon />}
           onClick={onNewChat}
           block
@@ -78,30 +70,30 @@ export function Sidebar({
           const sessionAgent = session.agentId ? getAgent(session.agentId) : getAgent('default');
           const AgentIcon = ICON_MAP[sessionAgent?.icon || 'Bot'] || Bot;
           return (
-            <div 
+            <div
               key={session.id}
               className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer transition-colors duration-200 group"
               style={{
-                backgroundColor: session.id === currentSessionId && !isSettingsPage && !isAdminPage
-                  ? 'var(--td-brand-color-light)' 
+                backgroundColor: session.id === currentSessionId
+                  ? 'var(--td-brand-color-light)'
                   : 'transparent',
-                color: session.id === currentSessionId && !isSettingsPage && !isAdminPage
-                  ? 'var(--td-brand-color)' 
+                color: session.id === currentSessionId
+                  ? 'var(--td-brand-color)'
                   : 'var(--td-text-color-secondary)'
               }}
               onClick={() => onSelectSession(session.id)}
               onMouseEnter={(e) => {
-                if (session.id !== currentSessionId || isSettingsPage || isAdminPage) {
+                if (session.id !== currentSessionId) {
                   e.currentTarget.style.backgroundColor = 'var(--td-bg-color-component-hover)';
                 }
               }}
               onMouseLeave={(e) => {
-                if (session.id !== currentSessionId || isSettingsPage || isAdminPage) {
+                if (session.id !== currentSessionId) {
                   e.currentTarget.style.backgroundColor = 'transparent';
                 }
               }}
             >
-              <div 
+              <div
                 className="flex-shrink-0 w-5 h-5 rounded flex items-center justify-center"
                 style={{ backgroundColor: sessionAgent?.color || 'var(--td-brand-color)' }}
               >
@@ -125,30 +117,15 @@ export function Sidebar({
           );
         })}
       </div>
-      
-      {/* 底部按钮区 */}
-      <div 
-        className="p-3 border-t flex-shrink-0 space-y-2"
+
+      {/* 底部提示（管理后台通过 /admin 直链访问，普通用户界面不展示入口） */}
+      <div
+        className="p-3 border-t flex-shrink-0"
         style={{ borderColor: 'var(--td-component-border)' }}
       >
-        <Button 
-          icon={<DashboardIcon />}
-          onClick={onOpenAdmin}
-          block
-          variant={isAdminPage ? 'outline' : 'text'}
-          theme={isAdminPage ? 'primary' : 'default'}
-        >
-          管理后台
-        </Button>
-        <Button 
-          icon={<SettingIcon />}
-          onClick={onOpenSettings}
-          block
-          variant={isSettingsPage ? 'outline' : 'text'}
-          theme={isSettingsPage ? 'primary' : 'default'}
-        >
-          设置
-        </Button>
+        <div className="text-xs text-center" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          {APP_CONFIG.description}
+        </div>
       </div>
     </aside>
   );

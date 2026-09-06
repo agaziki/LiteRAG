@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Table, Tag, Drawer, Button, Space, Loading, Empty,
-  Tooltip, MessagePlugin, Select, Input,
+  Tooltip, MessagePlugin, Select, Input, Textarea,
 } from 'tdesign-react';
 import {
   MessageSquare, Headphones, Star, TrendingUp, Users,
@@ -9,6 +9,15 @@ import {
 } from 'lucide-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { FaqManager } from '../components/FaqManager';
+import { SettingsPage } from '../components/SettingsPage';
+import { CustomAgent } from '../types';
+
+interface AdminPageProps {
+  agents: CustomAgent[];
+  onAdd: (agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => CustomAgent;
+  onUpdate: (id: string, updates: Partial<Omit<CustomAgent, 'id' | 'createdAt'>>) => void;
+  onDelete: (id: string) => void;
+}
 import { adminFetch, getAdminToken, setAdminToken, clearAdminToken, handleAuthExpired } from '../utils/adminAuth';
 
 // ============ 类型定义 ============
@@ -73,6 +82,8 @@ interface SessionDetail {
     intent: string | null;
     status: 'pending' | 'accepted' | 'resolved';
     created_at: string;
+    contact?: string | null;
+    note?: string | null;
   }>;
   intents: Array<{
     id: string;
@@ -96,15 +107,15 @@ const ESCALATION_STATUS_CONFIG: Record<string, { label: string; color: string }>
   resolved: { label: '已解决', color: '#2ba471' },
 };
 
-export function AdminPage() {
+export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps) {
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [intentFilter, setIntentFilter] = useState<string>('');
-  // 顶部标签：对话分析 / 知识库管理
-  const [tab, setTab] = useState<'analytics' | 'faq'>('analytics');
+  // 顶部标签：对话分析 / 知识库管理 / 系统设置
+  const [tab, setTab] = useState<'analytics' | 'faq' | 'settings'>('analytics');
 
   // 管理员登录（密码通过 .env 的 ADMIN_PASSWORD 配置）
   const [authed, setAuthed] = useState<boolean>(() => !!getAdminToken());
@@ -192,6 +203,38 @@ export function AdminPage() {
       MessagePlugin.error('更新失败');
     }
   }, [detail, openDetail, fetchStats]);
+
+  // 人工回复
+  const [replyText, setReplyText] = useState('');
+  const [replySending, setReplySending] = useState(false);
+
+  const sendReply = useCallback(async () => {
+    if (!detail || !replyText.trim()) {
+      MessagePlugin.warning('请输入回复内容');
+      return;
+    }
+    setReplySending(true);
+    try {
+      const res = await adminFetch(`/api/admin/sessions/${detail.session.id}/reply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: replyText.trim() }),
+      });
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      const data = await res.json();
+      if (data.success) {
+        MessagePlugin.success('人工回复已发送至用户对话');
+        setReplyText('');
+        openDetail(detail.session.id);
+      } else {
+        MessagePlugin.error(data.error || '回复失败');
+      }
+    } catch {
+      MessagePlugin.error('网络错误，回复失败');
+    } finally {
+      setReplySending(false);
+    }
+  }, [detail, replyText, openDetail]);
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -340,6 +383,14 @@ export function AdminPage() {
               >
                 知识库管理
               </Button>
+              <Button
+                size="small"
+                theme="primary"
+                variant={tab === 'settings' ? 'base' : 'outline'}
+                onClick={() => setTab('settings')}
+              >
+                系统设置
+              </Button>
             </div>
           </div>
           {tab === 'analytics' && (
@@ -355,7 +406,9 @@ export function AdminPage() {
           </Tooltip>
         </div>
 
-        {tab === 'faq' ? (
+        {tab === 'settings' ? (
+          <SettingsPage agents={agents} onAdd={onAdd} onUpdate={onUpdate} onDelete={onDelete} />
+        ) : tab === 'faq' ? (
           <FaqManager />
         ) : loading ? (
           <div className="flex justify-center py-20"><Loading size="large" /></div>
@@ -529,28 +582,51 @@ export function AdminPage() {
             {detail.escalations.length > 0 && (
               <Card title={`转人工记录 (${detail.escalations.length})`} bordered size="small">
                 {detail.escalations.map(e => (
-                  <div key={e.id} className="flex items-start gap-3 py-2 border-b last:border-0" style={{ borderColor: 'var(--td-component-border)' }}>
-                    <Tag color="warning" style={{ color: ESCALATION_STATUS_CONFIG[e.status]?.color }}>
-                      {ESCALATION_STATUS_CONFIG[e.status]?.label || e.status}
-                    </Tag>
-                    <div className="flex-1">
-                      <div className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>{e.reason}</div>
-                      {e.intent && (
-                        <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
-                          意图：{INTENT_LABELS[e.intent] || e.intent} · {formatTime(e.created_at)}
-                        </div>
+                  <div key={e.id} className="py-2 border-b last:border-0" style={{ borderColor: 'var(--td-component-border)' }}>
+                    <div className="flex items-start gap-3">
+                      <Tag color="warning" style={{ color: ESCALATION_STATUS_CONFIG[e.status]?.color }}>
+                        {ESCALATION_STATUS_CONFIG[e.status]?.label || e.status}
+                      </Tag>
+                      <div className="flex-1">
+                        <div className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>{e.reason}</div>
+                        {e.intent && (
+                          <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                            意图：{INTENT_LABELS[e.intent] || e.intent} · {formatTime(e.created_at)}
+                          </div>
+                        )}
+                        {e.contact && (
+                          <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                            用户留言：{e.contact}{e.note ? ` · ${e.note}` : ''}
+                          </div>
+                        )}
+                      </div>
+                      {e.status !== 'resolved' && (
+                        <Space>
+                          {e.status === 'pending' && (
+                            <Button size="small" onClick={() => updateEscalationStatus(e.id, 'accepted')}>接入</Button>
+                          )}
+                          <Button size="small" theme="success" onClick={() => updateEscalationStatus(e.id, 'resolved')}>标记解决</Button>
+                        </Space>
                       )}
                     </div>
-                    {e.status !== 'resolved' && (
-                      <Space>
-                        {e.status === 'pending' && (
-                          <Button size="small" onClick={() => updateEscalationStatus(e.id, 'accepted')}>接入</Button>
-                        )}
-                        <Button size="small" theme="success" onClick={() => updateEscalationStatus(e.id, 'resolved')}>标记解决</Button>
-                      </Space>
-                    )}
                   </div>
                 ))}
+                {/* 人工回复：写入用户对话，pending 工单自动置为已接入 */}
+                {detail.escalations.some(e => e.status !== 'resolved') && (
+                  <div className="pt-3 space-y-2">
+                    <Textarea
+                      value={replyText}
+                      onChange={(v) => setReplyText(typeof v === 'string' ? v : String(v))}
+                      placeholder="以人工客服身份回复用户（发送后显示在用户对话中，排队中的工单自动置为已接入）"
+                      autosize={{ minRows: 2, maxRows: 5 }}
+                    />
+                    <div className="flex justify-end">
+                      <Button size="small" theme="primary" loading={replySending} onClick={sendReply}>
+                        发送人工回复
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </Card>
             )}
 

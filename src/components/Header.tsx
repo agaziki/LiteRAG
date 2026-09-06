@@ -12,7 +12,6 @@ import { Model, Session, Agent, Theme } from '../types';
 import { ICON_MAP } from '../utils/iconMap';
 
 interface HeaderProps {
-  isSettingsPage: boolean;
   isAdminPage: boolean;
   sidebarOpen: boolean;
   theme: Theme;
@@ -25,7 +24,6 @@ interface HeaderProps {
 }
 
 export function Header({
-  isSettingsPage,
   isAdminPage,
   sidebarOpen,
   theme,
@@ -45,7 +43,7 @@ export function Header({
       .trim() || name;
   };
 
-  const hideAuxInfo = isSettingsPage || isAdminPage;
+  const hideAuxInfo = isAdminPage;
 
   return (
     <header 
@@ -72,11 +70,11 @@ export function Header({
             })()}
           </div>
         )}
-        <h1 
+        <h1
           className="text-base font-semibold"
           style={{ color: 'var(--td-text-color-primary)' }}
         >
-          {isSettingsPage ? '设置' : isAdminPage ? '管理后台' : (currentSession?.title || APP_CONFIG.name)}
+          {isAdminPage ? '管理后台' : (currentSession?.title || APP_CONFIG.name)}
         </h1>
         {!hideAuxInfo && currentSession && (
           <Tag size="small" variant="outline">

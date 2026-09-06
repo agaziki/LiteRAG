@@ -130,6 +130,12 @@ try {
     db.exec("ALTER TABLE messages ADD COLUMN images TEXT");
     console.log("[DB] Added images column to messages table");
   }
+  const escalationsInfo = db.prepare("PRAGMA table_info(escalations)").all() as Array<{ name: string }>;
+  if (!escalationsInfo.some(col => col.name === 'contact')) {
+    db.exec("ALTER TABLE escalations ADD COLUMN contact TEXT");
+    db.exec("ALTER TABLE escalations ADD COLUMN note TEXT");
+    console.log("[DB] Added contact/note columns to escalations table");
+  }
 } catch (e) {
   // 忽略错误（列可能已存在）
 }
@@ -367,6 +373,10 @@ export interface DbEscalation {
   status: 'pending' | 'accepted' | 'resolved';
   created_at: string;
   resolved_at: string | null;
+  /** 用户留言：联系方式（转人工后填写） */
+  contact?: string | null;
+  /** 用户留言：补充描述 */
+  note?: string | null;
 }
 
 export function createEscalation(esc: Omit<DbEscalation, 'status' | 'resolved_at'> & { status?: 'pending' | 'accepted' | 'resolved'; resolved_at?: string | null }): DbEscalation {
@@ -393,6 +403,13 @@ export function updateEscalationStatus(id: string, status: 'pending' | 'accepted
   const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
   const stmt = db.prepare('UPDATE escalations SET status = ?, resolved_at = COALESCE(?, resolved_at) WHERE id = ?');
   const result = stmt.run(status, resolvedAt, id);
+  return result.changes > 0;
+}
+
+/** 用户留言：保存联系方式与补充描述 */
+export function updateEscalationNote(id: string, contact: string, note: string): boolean {
+  const stmt = db.prepare('UPDATE escalations SET contact = ?, note = ? WHERE id = ?');
+  const result = stmt.run(contact, note, id);
   return result.changes > 0;
 }
 

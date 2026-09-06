@@ -1,7 +1,8 @@
 import { useRef, useCallback, useState } from 'react';
 import { Select, MessagePlugin } from 'tdesign-react';
 import { ChatSender } from '@tdesign-react/chat';
-import { ChevronDownIcon, ImageIcon, CloseCircleFilledIcon } from 'tdesign-icons-react';
+import { ChevronDownIcon, CloseCircleFilledIcon } from 'tdesign-icons-react';
+import { ImagePlus } from 'lucide-react';
 import { Model } from '../types';
 
 interface ChatInputProps {
@@ -37,10 +38,10 @@ export function ChatInput({
   onChange,
   onModelChange,
 }: ChatInputProps) {
-  const chatSenderRef = useRef<any>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const [pendingImages, setPendingImages] = useState<string[]>([]);
-  const modelSupportsVision = selectedModel.includes('vision');
+  // 仅视觉模型显示图片按钮（deepseek-v4-flash-vision-exp 等）
+  const isVisionModel = selectedModel.includes('vision');
 
   const addImages = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -72,13 +73,23 @@ export function ChatInput({
     setPendingImages(prev => prev.filter((_, i) => i !== index));
   }, []);
 
+  // 切换到非视觉模型时清空待发图片，避免无效发送
+  const handleModelChange = useCallback((modelId: string) => {
+    onModelChange(modelId);
+    if (!modelId.includes('vision') && pendingImages.length > 0) {
+      setPendingImages([]);
+      MessagePlugin.warning('当前模型不支持图片，已清空待发送图片');
+    }
+  }, [pendingImages.length, onModelChange]);
+
   const handleSend = useCallback((e: any) => {
     const content = e?.detail?.message || e?.detail || e?.message || inputValue;
+    const hasImages = pendingImages.length > 0;
     if (content && typeof content === 'string' && content.trim() && selectedModel) {
-      onSend(content.trim(), pendingImages.length > 0 ? pendingImages : undefined);
+      onSend(content.trim(), hasImages ? pendingImages : undefined);
       setPendingImages([]);
     } else if (inputValue.trim() && selectedModel) {
-      onSend(inputValue.trim(), pendingImages.length > 0 ? pendingImages : undefined);
+      onSend(inputValue.trim(), hasImages ? pendingImages : undefined);
       setPendingImages([]);
     }
   }, [inputValue, selectedModel, pendingImages, onSend]);
@@ -96,6 +107,47 @@ export function ChatInput({
       }}
     >
       <div className="max-w-3xl mx-auto">
+        {/* 工具栏：模型选择 + 图片按钮（普通 DOM 渲染，确保交互可靠） */}
+        <div className="flex items-center gap-3 mb-1.5">
+          <Select
+            value={selectedModel}
+            onChange={(value) => handleModelChange(value as string)}
+            placeholder="选择模型"
+            size="small"
+            style={{ width: 170 }}
+            filterable
+            borderless
+            suffixIcon={<ChevronDownIcon />}
+          >
+            {models.map(model => (
+              <Select.Option key={model.modelId} value={model.modelId} label={model.name} />
+            ))}
+          </Select>
+          {/* 图片按钮：仅视觉模型显示 */}
+          {isVisionModel && (
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              style={{ display: 'none' }}
+              onChange={(e) => addImages(e.target.files)}
+            />
+          )}
+          {isVisionModel && (
+            <button
+              type="button"
+              title="添加图片（最多 4 张，单张 ≤5MB）"
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-md border-0 bg-transparent cursor-pointer"
+              style={{ color: pendingImages.length > 0 ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)' }}
+              onClick={() => imageInputRef.current?.click()}
+            >
+              <ImagePlus size={15} />
+              图片
+            </button>
+          )}
+        </div>
+
         {/* 待发送图片预览 */}
         {pendingImages.length > 0 && (
           <div className="flex items-center gap-2 mb-2 flex-wrap">
@@ -117,24 +169,10 @@ export function ChatInput({
             ))}
           </div>
         )}
-        {!modelSupportsVision && pendingImages.length > 0 && (
-          <div className="text-xs mb-2" style={{ color: 'var(--td-warning-color)' }}>
-            当前模型可能不支持图片输入，建议切换到 DeepSeek V4-Flash Vision 模型
-          </div>
-        )}
-        {/* 文件选择器置于组件根节点（不放入 ChatSender 插槽，确保 click 可触发） */}
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          multiple
-          style={{ display: 'none' }}
-          onChange={(e) => addImages(e.target.files)}
-        />
+
         <ChatSender
-          ref={chatSenderRef}
           value={inputValue}
-          placeholder="输入消息...（可附带图片询问）"
+          placeholder="输入消息..."
           disabled={!selectedModel}
           loading={isLoading}
           autosize={{ minRows: 1, maxRows: 6 }}
@@ -142,35 +180,7 @@ export function ChatInput({
           onSend={handleSend}
           onStop={onStop}
           onChange={handleChange}
-        >
-          {/* 模型选择器与图片按钮放在 footer-prefix 插槽 */}
-          <div slot="footer-prefix" className="flex items-center gap-2">
-            <Select
-              value={selectedModel}
-              onChange={(value) => onModelChange(value as string)}
-              placeholder="选择模型"
-              size="small"
-              style={{ width: 160 }}
-              filterable
-              borderless
-              suffixIcon={<ChevronDownIcon />}
-            >
-              {models.map(model => (
-                <Select.Option key={model.modelId} value={model.modelId} label={model.name} />
-              ))}
-            </Select>
-            {/* 图片上传（视觉模型） */}
-            <button
-              type="button"
-              title="添加图片（最多 4 张，单张 ≤5MB，需 Vision 模型）"
-              className="inline-flex items-center justify-center p-1 rounded border-0 bg-transparent cursor-pointer"
-              style={{ color: pendingImages.length > 0 ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)' }}
-              onClick={() => imageInputRef.current?.click()}
-            >
-              <ImageIcon size="18px" />
-            </button>
-          </div>
-        </ChatSender>
+        />
       </div>
     </div>
   );

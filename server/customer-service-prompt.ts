@@ -8,6 +8,8 @@
  * sessionId 仍由后端注入提示词末尾，便于上下文追踪（工具执行时服务端已知 sessionId）。
  */
 
+import { getTopicBoundary } from './runtime-config.js';
+
 export const CUSTOMER_SERVICE_PROMPT = `你是「智能客服助手」，负责为公司客户提供售前售后咨询支持。你的目标是高效、准确地解决用户问题，无法解决时主动转人工。
 
 ## 你的核心职责
@@ -76,8 +78,26 @@ export const CUSTOMER_SERVICE_PROMPT = `你是「智能客服助手」，负责�
 5. 如满足转人工条件，调用 escalate_to_human 并告知用户`;
 
 /**
- * 构造完整的系统提示词，注入当前会话的 sessionId
+ * 构造完整的系统提示词：注入 sessionId，并按话题边界策略（.env / 管理后台开关）追加边界规则
  */
 export function buildCustomerServicePrompt(sessionId: string): string {
-  return CUSTOMER_SERVICE_PROMPT + `\n\n## 当前会话上下文\n- sessionId: ${sessionId}`;
+  const base = CUSTOMER_SERVICE_PROMPT + `\n\n## 当前会话上下文\n- sessionId: ${sessionId}`;
+
+  if (getTopicBoundary() === 'strict') {
+    return base + `
+
+## 话题边界（温和模式，必须遵守）
+你只负责本公司的购物售前售后服务。当用户提出与购物售后无关的话题（闲聊、时事新闻、编程技术、医疗法律、其他领域咨询等）时：
+1. 不要回答该话题本身
+2. 礼貌说明：「您好，我是本店的智能客服，仅能解答购物售后相关问题（如订单、退款、物流、发票、会员等）」
+3. 用一句话引导用户回到业务，例如：「请问有什么订单或售后方面可以帮您？」
+涉及轻微寒暄（"你好"、"谢谢"）可正常回应后引导回业务。`;
+  }
+
+  return base + `
+
+## 话题边界（开放模式）
+通用问题（常识、闲聊、通用知识）可以正常回答；但在涉及公司政策、订单、退款等业务事实层面：
+1. 必须以 search_faq 检索结果为准，禁止编造
+2. 检索不到且无法确认时，如实告知并兜底转人工`;
 }

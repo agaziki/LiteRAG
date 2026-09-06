@@ -15,6 +15,7 @@ import {
 import { parseImportFile, buildCsvTemplate } from "./faq-import.js";
 import { ingestDoc, listDocs, deleteDoc } from "./kb-docs.js";
 import { isEmbeddingEnabled } from "./embeddings.js";
+import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages } from "./deepseek-agent.js";
 
@@ -748,13 +749,31 @@ app.post("/api/escalate", (req, res) => {
   }
 });
 
-// 获取某会话的转人工状态
+// 获取某会话的转人工状态（含人工回复数量，供前端检测新回复）
 app.get("/api/escalate/:sessionId", (req, res) => {
   try {
     const escalations = db.getEscalationsBySession(req.params.sessionId);
-    res.json({ escalations });
+    const humanReplies = db.getMessagesBySession(req.params.sessionId)
+      .filter(m => m.model === 'human-agent').length;
+    res.json({ escalations, humanReplies });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取转人工状态失败" });
+  }
+});
+
+// 用户留言：转人工后补充联系方式与问题描述
+app.post("/api/escalate/note/:escalationId", (req, res) => {
+  try {
+    const { contact, note } = req.body || {};
+    if (!String(contact || '').trim() || !String(note || '').trim()) {
+      return res.status(400).json({ error: "请填写联系方式和问题描述" });
+    }
+    const success = db.updateEscalationNote(req.params.escalationId, String(contact).trim(), String(note).trim());
+    if (!success) return res.status(404).json({ error: "转人工记录不存在" });
+    console.log(`[Escalate] 用户已留言: ${req.params.escalationId}`);
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "留言失败" });
   }
 });
 
@@ -842,6 +861,34 @@ app.get("/api/admin/sessions/:sessionId", (req, res) => {
   }
 });
 
+// 人工客服回复：以特殊消息（model=human-agent）写入会话，用户端渲染为人工客服消息；
+// 回复即视为已接入，将最新 pending 工单置为 accepted
+app.post("/api/admin/sessions/:sessionId/reply", (req, res) => {
+  try {
+    const { content } = req.body || {};
+    const text = String(content || '').trim();
+    if (!text) return res.status(400).json({ error: "回复内容不能为空" });
+    const session = db.getSession(req.params.sessionId);
+    if (!session) return res.status(404).json({ error: "会话不存在" });
+    const message = db.createMessage({
+      id: uuidv4(),
+      session_id: session.id,
+      role: 'assistant',
+      content: text,
+      model: 'human-agent',
+      created_at: new Date().toISOString(),
+      tool_calls: null,
+      images: null,
+    });
+    const pending = db.getEscalationsBySession(session.id).filter(e => e.status === 'pending').pop();
+    if (pending) db.updateEscalationStatus(pending.id, 'accepted');
+    console.log(`[Escalate] 人工回复已写入会话 ${session.id}`);
+    res.json({ success: true, message });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "回复失败" });
+  }
+});
+
 // 更新转人工状态
 app.patch("/api/admin/escalations/:id", (req, res) => {
   try {
@@ -869,6 +916,23 @@ if (fs.existsSync(path.join(distDir, 'index.html'))) {
   });
   console.log(`[Static] 托管前端构建产物: ${distDir}`);
 }
+
+// ============= 运行时配置（管理后台） =============
+
+// 获取话题边界策略（strict=温和 / open=开放）
+app.get("/api/admin/topic-boundary", (req, res) => {
+  res.json({ mode: getTopicBoundary() });
+});
+
+// 切换话题边界策略（写入 data/config.json，环境变量 TOPIC_BOUNDARY 显式设置时优先）
+app.post("/api/admin/topic-boundary", (req, res) => {
+  const { mode } = req.body || {};
+  if (mode !== 'strict' && mode !== 'open') {
+    return res.status(400).json({ error: "无效的话题边界策略（仅支持 strict / open）" });
+  }
+  setTopicBoundary(mode);
+  res.json({ success: true, mode });
+});
 
 // 启动服务器
 app.listen(PORT, () => {
