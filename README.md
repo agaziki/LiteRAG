@@ -206,6 +206,8 @@ npm run embed:check   # 验证 embedding 服务连通性（需先配置 EMBEDDIN
 - 仓库**不包含任何密钥**：API Key 仅通过 `.env`（已 gitignore）或运行时设置页注入
 - `data/`（数据库与向量缓存）已 gitignore，不随仓库分发
 - 对话内容与知识库数据仅存储在本地 SQLite，唯一的对外调用是 DeepSeek API 与（可选的）embedding 服务
+- **管理后台权限控制**：在 `.env` 中配置 `ADMIN_PASSWORD` 后，访问 `/admin` 需输入密码（登录有效期 8 小时）；知识库的检索、管理与文档上传 API 同样受此保护。**未配置 `ADMIN_PASSWORD` 时，管理后台与知识库管理 API 整体禁用**（返回 503 提示），公网部署务必设置
+- 图片问答仅支持 png/jpeg/webp/gif 的 data URL（服务端强校验，最多 4 张、单张 ≤5MB），不上传至任何第三方存储
 
 ## 生产部署
 

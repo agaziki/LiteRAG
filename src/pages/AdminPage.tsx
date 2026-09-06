@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Table, Tag, Drawer, Button, Space, Loading, Empty,
-  Tooltip, MessagePlugin, Select,
+  Tooltip, MessagePlugin, Select, Input,
 } from 'tdesign-react';
 import {
   MessageSquare, Headphones, Star, TrendingUp, Users,
-  RefreshCw, ArrowLeft, User, Bot as BotIcon, AlertCircle,
+  RefreshCw, ArrowLeft, User, Bot as BotIcon, AlertCircle, KeyRound, LogOut,
 } from 'lucide-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { FaqManager } from '../components/FaqManager';
+import { adminFetch, getAdminToken, setAdminToken, clearAdminToken, handleAuthExpired } from '../utils/adminAuth';
 
 // ============ 类型定义 ============
 interface AdminStats {
@@ -105,10 +106,50 @@ export function AdminPage() {
   // 顶部标签：对话分析 / 知识库管理
   const [tab, setTab] = useState<'analytics' | 'faq'>('analytics');
 
+  // 管理员登录（密码通过 .env 的 ADMIN_PASSWORD 配置）
+  const [authed, setAuthed] = useState<boolean>(() => !!getAdminToken());
+  const [password, setPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+
+  const handleLogin = useCallback(async () => {
+    if (!password.trim()) { setAuthError('请输入密码'); return; }
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const res = await fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setAdminToken(data.token);
+        setAuthed(true);
+        setPassword('');
+      } else {
+        setAuthError(data.error || '登录失败');
+      }
+    } catch {
+      setAuthError('网络错误，请重试');
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [password]);
+
+  const handleLogout = useCallback(() => {
+    clearAdminToken();
+    setAuthed(false);
+    setStats(null);
+    setDetail(null);
+    setDrawerOpen(false);
+  }, []);
+
   const fetchStats = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/stats');
+      const res = await adminFetch('/api/admin/stats');
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
       const data = await res.json();
       setStats(data);
     } catch (e) {
@@ -118,14 +159,15 @@ export function AdminPage() {
     }
   }, []);
 
-  useEffect(() => { fetchStats(); }, [fetchStats]);
+  useEffect(() => { if (authed) fetchStats(); }, [authed, fetchStats]);
 
   const openDetail = useCallback(async (sessionId: string) => {
     setDrawerOpen(true);
     setDetailLoading(true);
     setDetail(null);
     try {
-      const res = await fetch(`/api/admin/sessions/${sessionId}`);
+      const res = await adminFetch(`/api/admin/sessions/${sessionId}`);
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
       const data = await res.json();
       setDetail(data);
     } catch (e) {
@@ -137,11 +179,12 @@ export function AdminPage() {
 
   const updateEscalationStatus = useCallback(async (escalationId: string, status: 'pending' | 'accepted' | 'resolved') => {
     try {
-      await fetch(`/api/admin/escalations/${escalationId}`, {
+      const res = await adminFetch(`/api/admin/escalations/${escalationId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
       MessagePlugin.success('状态已更新');
       if (detail) openDetail(detail.session.id);
       fetchStats();
@@ -228,6 +271,46 @@ export function AdminPage() {
     },
   ];
 
+  // 未登录：密码门
+  if (!authed) {
+    return (
+      <div className="flex-1 overflow-y-auto p-6 flex items-center justify-center">
+        <Card bordered style={{ width: 380 }}>
+          <div className="text-center mb-5">
+            <div
+              className="w-14 h-14 rounded-full mx-auto flex items-center justify-center mb-3"
+              style={{ backgroundColor: 'var(--td-brand-color-light)' }}
+            >
+              <KeyRound size={24} style={{ color: 'var(--td-brand-color)' }} />
+            </div>
+            <h1 className="text-lg font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
+              管理后台
+            </h1>
+            <p className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+              请输入管理员密码（服务端 .env 的 ADMIN_PASSWORD）
+            </p>
+          </div>
+          <Input
+            type="password"
+            value={password}
+            onChange={(v) => setPassword(String(v))}
+            placeholder="管理员密码"
+            clearable
+            onEnter={handleLogin}
+          />
+          {authError && (
+            <div className="text-xs mt-2" style={{ color: 'var(--td-error-color)' }}>
+              {authError}
+            </div>
+          )}
+          <Button theme="primary" block className="mt-4" loading={authLoading} onClick={handleLogin}>
+            登录
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-1 overflow-y-auto p-6">
       <div className="max-w-7xl mx-auto">
@@ -265,6 +348,11 @@ export function AdminPage() {
               刷新
             </Button>
           )}
+          <Tooltip content="退出登录">
+            <Button variant="text" shape="circle" onClick={handleLogout}>
+              <LogOut size={16} />
+            </Button>
+          </Tooltip>
         </div>
 
         {tab === 'faq' ? (

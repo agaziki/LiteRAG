@@ -122,6 +122,15 @@ export function ChatInput({
             当前模型可能不支持图片输入，建议切换到 DeepSeek V4-Flash Vision 模型
           </div>
         )}
+        {/* 文件选择器置于组件根节点（不放入 ChatSender 插槽，确保 click 可触发） */}
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => addImages(e.target.files)}
+        />
         <ChatSender
           ref={chatSenderRef}
           value={inputValue}
@@ -151,20 +160,15 @@ export function ChatInput({
               ))}
             </Select>
             {/* 图片上传（视觉模型） */}
-            <input
-              ref={imageInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              className="hidden"
-              onChange={(e) => addImages(e.target.files)}
-            />
-            <ImageIcon
-              size="18px"
-              className="cursor-pointer"
+            <button
+              type="button"
+              title="添加图片（最多 4 张，单张 ≤5MB，需 Vision 模型）"
+              className="inline-flex items-center justify-center p-1 rounded border-0 bg-transparent cursor-pointer"
               style={{ color: pendingImages.length > 0 ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)' }}
               onClick={() => imageInputRef.current?.click()}
-            />
+            >
+              <ImageIcon size="18px" />
+            </button>
           </div>
         </ChatSender>
       </div>

@@ -4,6 +4,7 @@ import {
   Select, Loading, Empty, MessagePlugin, Radio,
 } from 'tdesign-react';
 import { Plus, RefreshCw, Search, Pencil, Trash2, Database, Sparkles, Upload, Download, FileText, FilePlus2 } from 'lucide-react';
+import { adminFetch, handleAuthExpired } from '../utils/adminAuth';
 
 // ============ 类型 ============
 
@@ -95,7 +96,8 @@ export function FaqManager() {
   const fetchFaq = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/faq');
+      const res = await adminFetch('/api/faq');
+      if (handleAuthExpired(res)) return;
       const json = await res.json();
       setData(json);
     } catch {
@@ -115,7 +117,8 @@ export function FaqManager() {
     }
     setTesting(true);
     try {
-      const res = await fetch(`/api/faq/search?q=${encodeURIComponent(testQuery.trim())}&limit=5`);
+      const res = await adminFetch(`/api/faq/search?q=${encodeURIComponent(testQuery.trim())}&limit=5`);
+      if (handleAuthExpired(res)) return;
       const json = await res.json();
       setTestResult(json);
     } catch {
@@ -145,7 +148,7 @@ export function FaqManager() {
     try {
       const isEdit = itemDialog?.mode === 'edit';
       const url = isEdit ? `/api/faq/items/${itemDialog!.item!.id}` : '/api/faq/items';
-      const res = await fetch(url, {
+      const res = await adminFetch(url, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -155,6 +158,7 @@ export function FaqManager() {
           tags: itemForm.tags,
         }),
       });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success(isEdit ? '条目已更新' : '条目已添加');
@@ -172,7 +176,8 @@ export function FaqManager() {
 
   const removeItem = useCallback(async (itemId: string) => {
     try {
-      const res = await fetch(`/api/faq/items/${itemId}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/faq/items/${itemId}`, { method: 'DELETE' });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success('条目已删除');
@@ -195,11 +200,12 @@ export function FaqManager() {
     try {
       const isEdit = catDialog?.mode === 'edit';
       const url = isEdit ? `/api/faq/categories/${catDialog!.category!.id}` : '/api/faq/categories';
-      const res = await fetch(url, {
+      const res = await adminFetch(url, {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: catForm.name, keywords: catForm.keywords }),
       });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success(isEdit ? '分类已更新' : '分类已添加');
@@ -217,7 +223,8 @@ export function FaqManager() {
 
   const removeCategory = useCallback(async (categoryId: string) => {
     try {
-      const res = await fetch(`/api/faq/categories/${categoryId}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/faq/categories/${categoryId}`, { method: 'DELETE' });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success('分类已删除');
@@ -276,7 +283,8 @@ export function FaqManager() {
   // ---- 文档知识库（RAG） ----
   const fetchDocs = useCallback(async () => {
     try {
-      const res = await fetch('/api/faq/docs');
+      const res = await adminFetch('/api/faq/docs');
+      if (handleAuthExpired(res)) return;
       const json = await res.json();
       setDocs(json.docs || []);
       setDocsSemantic(!!json.semantic);
@@ -292,7 +300,8 @@ export function FaqManager() {
     try {
       const form = new FormData();
       form.append('file', file);
-      const res = await fetch('/api/faq/docs', { method: 'POST', body: form });
+      const res = await adminFetch('/api/faq/docs', { method: 'POST', body: form });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success(`文档「${json.doc.name}」已入库，切分 ${json.doc.chunkCount} 块`);
@@ -310,7 +319,8 @@ export function FaqManager() {
 
   const removeDoc = useCallback(async (docId: string) => {
     try {
-      const res = await fetch(`/api/faq/docs/${docId}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/faq/docs/${docId}`, { method: 'DELETE' });
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
       const json = await res.json();
       if (json.success) {
         MessagePlugin.success('文档已删除');

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Button, Textarea, MessagePlugin } from 'tdesign-react';
 import { Star } from 'lucide-react';
 
@@ -25,6 +25,27 @@ export function RatingStars({ sessionId, messageId, initialRating, initialCommen
   });
   const [expanded, setExpanded] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  // 挂载时查询该消息是否已有评价（防止刷新后重复评价）
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/ratings/${sessionId}`);
+        const data = await res.json();
+        if (cancelled || !Array.isArray(data.ratings)) return;
+        const mine = messageId
+          ? data.ratings.find((r: any) => r.message_id === messageId)
+          : data.ratings[data.ratings.length - 1];
+        if (mine) {
+          setState({ rating: mine.rating, comment: mine.comment || '', submitted: true });
+        }
+      } catch {
+        // 静默失败：未查询到时保持可评价状态
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId, messageId]);
 
   const handleSubmit = useCallback(async (rating: number, comment: string) => {
     if (submitting) return;

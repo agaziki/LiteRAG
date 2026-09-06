@@ -396,13 +396,13 @@ export function getDeepSeekModels() {
   return [
     {
       modelId: "deepseek-v4-flash",
-      name: "DeepSeek V4-Flash (deepseek-v4-flash)",
+      name: "DeepSeek V4-Flash",
       description: "V4 系列高效 MoE 模型（公测），支持函数调用与长上下文，性价比高，客服场景推荐",
     },
     {
       modelId: "deepseek-v4-flash-vision-exp",
-      name: "DeepSeek V4-Flash Vision Exp (deepseek-v4-flash-vision-exp)",
-      description: "实验版：在 V4-Flash 基础上支持图片输入（当前对话界面暂未提供图片上传，仅文本调用同样可用）",
+      name: "DeepSeek V4-Flash Vision",
+      description: "实验版（deepseek-v4-flash-vision-exp）：在 V4-Flash 基础上支持图片输入",
     },
   ];
 }

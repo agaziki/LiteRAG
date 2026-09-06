@@ -199,7 +199,6 @@ export function SettingsPage({
   };
 
   const handleEdit = (agent: CustomAgent) => {
-    if (agent.id === 'default') return;
     setEditingAgent(agent);
     setFormData({
       name: agent.name,
@@ -212,8 +211,8 @@ export function SettingsPage({
   };
 
   const handleSave = () => {
-    if (!formData.name.trim() || !formData.systemPrompt.trim()) {
-      MessagePlugin.warning('请填写名称和系统提示词');
+    if (!formData.name.trim() || (!formData.systemPrompt.trim() && !isEditingDefault)) {
+      MessagePlugin.warning(isEditingDefault ? '请填写名称（默认客服 Agent 的系统提示词可留空，留空使用后端内置提示词）' : '请填写名称和系统提示词');
       return;
     }
 
@@ -246,6 +245,8 @@ export function SettingsPage({
   };
 
   const customAgents = agents.filter(a => a.id !== 'default');
+  const defaultAgent = agents.find(a => a.id === 'default');
+  const isEditingDefault = editingAgent?.id === 'default';
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
@@ -517,11 +518,11 @@ export function SettingsPage({
                         </div>
                       </Form.FormItem>
                       
-                      <Form.FormItem label="系统提示词" requiredMark>
-                        <Textarea 
+                      <Form.FormItem label={isEditingDefault ? '系统提示词（留空使用后端内置客服提示词）' : '系统提示词'} requiredMark={!isEditingDefault}>
+                        <Textarea
                           value={formData.systemPrompt}
-                          onChange={(v) => setFormData(prev => ({ ...prev, systemPrompt: v as string }))}
-                          placeholder="定义 Agent 的行为和能力..."
+                          onChange={(v) => setFormData(prev => ({ ...prev, systemPrompt: typeof v === 'string' ? v : String(v) }))}
+                          placeholder={isEditingDefault ? '留空 = 使用后端内置客服提示词（意图识别 + FAQ/文档检索 + 转人工）' : '定义 Agent 的行为和能力...'}
                           autosize={{ minRows: 4, maxRows: 8 }}
                         />
                       </Form.FormItem>
@@ -537,11 +538,47 @@ export function SettingsPage({
                 </div>
               ) : (
                 <>
-                  {/* 快速模板 */}
+                  {/* 默认客服 Agent（可编辑，不可删除） */}
+                  {defaultAgent && (
+                    <div>
+                      <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
+                        默认客服 Agent
+                      </h4>
+                      <div className="p-3 rounded-lg flex items-center gap-3" style={{ backgroundColor: 'var(--td-bg-color-component)' }}>
+                        <div
+                          className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                          style={{ backgroundColor: defaultAgent.color || '#0052d9' }}
+                        >
+                          {(() => { const Icon = getIconComponent(defaultAgent.icon || 'Headphones'); return <Icon size={20} color="white" />; })()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{defaultAgent.name}</span>
+                            <Tag size="small" theme="primary">默认</Tag>
+                          </div>
+                          <div className="text-xs truncate mt-0.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                            {defaultAgent.systemPrompt ? defaultAgent.description || defaultAgent.systemPrompt.slice(0, 50) + '...' : '使用后端内置客服提示词（意图识别 + FAQ/文档检索 + 转人工）'}
+                          </div>
+                        </div>
+                        <Button
+                          variant="text"
+                          shape="circle"
+                          size="small"
+                          icon={<EditIcon />}
+                          onClick={() => handleEdit(defaultAgent)}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 从模板快速创建 */}
                   <div>
-                    <h4 className="text-sm font-medium mb-3" style={{ color: 'var(--td-text-color-secondary)' }}>
-                      快速创建
+                    <h4 className="text-sm font-medium mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+                      从模板快速创建
                     </h4>
+                    <p className="text-xs mb-3" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                      点击模板生成一个可编辑的自定义 Agent（模板本身不是 Agent，创建后才会出现在新对话页）
+                    </p>
                     <div className="grid grid-cols-2 gap-3">
                       {PRESET_TEMPLATES.map(template => {
                         const Icon = getIconComponent(template.icon);

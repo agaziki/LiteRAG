@@ -314,6 +314,20 @@ export function createRating(rating: DbRating): DbRating {
   return rating;
 }
 
+/** 按（会话+消息）去重保存评价：同一条消息重复评价时更新原记录 */
+export function upsertRating(rating: DbRating): DbRating {
+  if (rating.message_id) {
+    const existing = db.prepare('SELECT id FROM ratings WHERE session_id = ? AND message_id = ?')
+      .get(rating.session_id, rating.message_id) as { id: string } | undefined;
+    if (existing) {
+      db.prepare('UPDATE ratings SET rating = ?, comment = ?, created_at = ? WHERE id = ?')
+        .run(rating.rating, rating.comment, rating.created_at, existing.id);
+      return { ...rating, id: existing.id };
+    }
+  }
+  return createRating(rating);
+}
+
 export function getRatingsBySession(sessionId: string): DbRating[] {
   const stmt = db.prepare('SELECT * FROM ratings WHERE session_id = ? ORDER BY created_at ASC');
   return stmt.all(sessionId) as DbRating[];

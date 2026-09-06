@@ -2,6 +2,7 @@ import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { fileURLToPath } from "url";
 import multer from "multer";
 import * as db from "./db.js";
@@ -352,6 +353,7 @@ app.post("/api/chat", async (req, res) => {
 
   // 累积完整回复和工具调用
   let fullResponse = "";
+  let lastErrorMessage = "";
   const toolCalls: Array<{
     id: string;
     name: string;
@@ -362,10 +364,15 @@ app.post("/api/chat", async (req, res) => {
   }> = [];
 
   // 处理客户端断开
+  // 注意：req 的 close 事件在请求体读取完成后即触发（Express 解析 JSON 后立即发生），
+  // 不能用于断连检测，否则每次对话都会被立刻中止（"Request was aborted"）。
+  // res 的 close 才代表连接关闭：配合 writableEnded 区分"提前断开"与"正常结束"。
   const ac = new AbortController();
-  req.on('close', () => {
-    console.log(`[Chat] 客户端断开连接`);
-    ac.abort();
+  res.on('close', () => {
+    if (!res.writableEnded) {
+      console.log(`[Chat] 客户端断开连接`);
+      ac.abort();
+    }
   });
 
   try {
@@ -414,16 +421,17 @@ app.post("/api/chat", async (req, res) => {
       },
       onError: (error) => {
         console.error(`[Chat] Agent 错误:`, error.message);
+        lastErrorMessage = error.message;
         res.write(`data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`);
       },
     });
 
-    // 保存助手消息到数据库
+    // 保存助手消息到数据库（出错且无内容时持久化错误说明，保证刷新后回显一致）
     db.createMessage({
       id: assistantMessageId,
       session_id: session.id,
       role: 'assistant',
-      content: fullResponse || '(无回复内容)',
+      content: fullResponse || (lastErrorMessage ? `【对话出错】${lastErrorMessage}` : '(无回复内容)'),
       model: selectedModel,
       created_at: new Date().toISOString(),
       tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
@@ -468,6 +476,45 @@ app.post("/api/chat", async (req, res) => {
     res.end();
   }
 });
+
+// ============= 管理后台鉴权 =============
+// 密码通过 .env 的 ADMIN_PASSWORD 配置；未配置时管理后台与知识库管理 API 整体禁用。
+const ADMIN_TOKEN_TTL = 8 * 60 * 60 * 1000; // 登录有效期 8 小时
+const adminTokens = new Map<string, number>();
+
+app.post("/api/admin/login", (req, res) => {
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(503).json({ error: "管理后台未启用：请在 .env 中配置 ADMIN_PASSWORD 后重启服务" });
+  }
+  const { password } = req.body || {};
+  const a = Buffer.from(String(password || ""));
+  const b = Buffer.from(process.env.ADMIN_PASSWORD);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(401).json({ error: "密码错误" });
+  }
+  const token = crypto.randomBytes(32).toString("hex");
+  adminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL);
+  for (const [t, e] of adminTokens) if (e < Date.now()) adminTokens.delete(t);
+  res.json({ success: true, token, expiresIn: ADMIN_TOKEN_TTL });
+});
+
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(503).json({ error: "管理后台未启用：请在 .env 中配置 ADMIN_PASSWORD 后重启服务" });
+  }
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const expiresAt = token ? adminTokens.get(token) : undefined;
+  if (!expiresAt || expiresAt < Date.now()) {
+    if (token) adminTokens.delete(token);
+    return res.status(401).json({ error: "未登录或登录已过期" });
+  }
+  next();
+}
+
+// /api/admin/* 与 /api/faq/*（知识库检索/管理）均需管理员登录；登录路由已在上方注册，不受影响
+app.use("/api/admin", requireAdmin);
+app.use("/api/faq", requireAdmin);
 
 // ============= FAQ 知识库 API =============
 
@@ -648,7 +695,7 @@ app.post("/api/ratings", (req, res) => {
     if (!session) {
       return res.status(404).json({ error: "会话不存在" });
     }
-    const record = db.createRating({
+    const record = db.upsertRating({
       id: uuidv4(),
       session_id: sessionId,
       message_id: messageId || null,

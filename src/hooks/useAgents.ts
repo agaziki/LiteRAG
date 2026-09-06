@@ -22,11 +22,17 @@ export function useAgents() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        return [DEFAULT_AGENT, ...parsed.map((a: any) => ({
-          ...a,
-          createdAt: new Date(a.createdAt),
-          updatedAt: new Date(a.updatedAt),
-        }))];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const list = parsed.map((a: any) => ({
+            ...a,
+            createdAt: new Date(a.createdAt),
+            updatedAt: new Date(a.updatedAt),
+          }));
+          // 新格式：默认客服 Agent 的编辑内容一并持久化；
+          // 兼容旧格式（存储中无 default 时补上）
+          if (list.some((a: CustomAgent) => a.id === 'default')) return list;
+          return [DEFAULT_AGENT, ...list];
+        }
       }
     } catch (e) {
       console.error('Failed to load agents:', e);
@@ -34,10 +40,9 @@ export function useAgents() {
     return [DEFAULT_AGENT];
   });
 
-  // 保存到 localStorage（排除默认 agent）
+  // 保存全部 Agent（含默认客服 Agent 的编辑内容）
   const saveAgents = useCallback((newAgents: CustomAgent[]) => {
-    const toSave = newAgents.filter(a => a.id !== 'default');
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(newAgents));
   }, []);
 
   const addAgent = useCallback((agent: Omit<CustomAgent, 'id' | 'createdAt' | 'updatedAt'>) => {
@@ -66,7 +71,7 @@ export function useAgents() {
   }, [saveAgents]);
 
   const deleteAgent = useCallback((id: string) => {
-    if (id === 'default') return; // 不能删除默认 agent
+    if (id === 'default') return; // 默认客服 Agent 不可删除（可编辑）
     setAgents(prev => {
       const updated = prev.filter(a => a.id !== id);
       saveAgents(updated);

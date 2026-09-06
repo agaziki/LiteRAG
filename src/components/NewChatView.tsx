@@ -1,4 +1,4 @@
-import { Bot } from 'lucide-react';
+import { Bot, Plus } from 'lucide-react';
 import { APP_CONFIG } from '../config';
 import { Agent } from '../types';
 import { ICON_MAP } from '../utils/iconMap';
@@ -80,6 +80,23 @@ export function NewChatView({
                 </div>
               );
             })}
+          </div>
+          {/* 更多 Agent 占位提示 */}
+          <div
+            className="mt-3 p-3 rounded-xl border border-dashed flex items-center gap-3 opacity-70"
+            style={{ borderColor: 'var(--td-component-border)' }}
+          >
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--td-bg-color-component)' }}>
+              <Plus size={18} style={{ color: 'var(--td-text-color-placeholder)' }} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
+                更多 Agent 敬请期待
+              </div>
+              <div className="text-xs mt-0.5" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                可前往「设置」页立即创建自定义 Agent，创建后在此显示
+              </div>
+            </div>
           </div>
         </div>
 
