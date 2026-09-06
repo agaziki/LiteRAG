@@ -233,7 +233,7 @@ npm run build   # 类型检查 + 构建前端到 dist/
 npm start       # 单端口 3000：API + 前端静态托管（SPA）
 ```
 
-完整部署流程（PM2 进程守护、nginx 反向代理 SSE 配置、数据备份、升级与故障排查）见 [DEPLOYMENT.md](./DEPLOYMENT.md)；**宝塔面板部署**见 [BAOTA-DEPLOYMENT.md](./BAOTA-DEPLOYMENT.md)；二次开发指南见 [DEVELOPMENT.md](./DEVELOPMENT.md)。
+完整部署流程（PM2 进程守护、nginx 反向代理 SSE 配置、数据备份、升级与故障排查）见 [DEPLOYMENT.md](./DEPLOYMENT.md)；**宝塔面板部署**见 [BAOTA-DEPLOYMENT.md](./BAOTA-DEPLOYMENT.md)；二次开发指南见 [DEVELOPMENT.md](./DEVELOPMENT.md)；版本规划见 [ROADMAP.md](./ROADMAP.md)。
 
 ## License
 
