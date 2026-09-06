@@ -18,6 +18,8 @@ interface ChatInputProps {
 
 const MAX_IMAGES = 4;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** 长边压缩上限：减少 base64 体积，canvas 重编码同时剥离 EXIF 等元数据 */
+const MAX_EDGE = 2048;
 
 function readAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,6 +27,34 @@ function readAsDataURL(file: File): Promise<string> {
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * 压缩图片：长边超过 2048px 时等比缩放并重新编码（JPEG 90%），
+ * 重编码天然剥离 EXIF/GPS 等元数据；GIF（可能含动画）与压缩失败时保留原图。
+ */
+function compressImage(dataUrl: string): Promise<string> {
+  return new Promise(resolve => {
+    if (dataUrl.startsWith('data:image/gif')) return resolve(dataUrl);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+        if (scale >= 1 && dataUrl.startsWith('data:image/jpeg')) return resolve(dataUrl); // 无需处理
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(dataUrl);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL(dataUrl.startsWith('data:image/png') ? 'image/png' : 'image/jpeg', 0.9));
+      } catch {
+        resolve(dataUrl); // 压缩失败保留原图（服务端仍有大小/格式校验）
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
   });
 }
 
@@ -63,7 +93,8 @@ export function ChatInput({
         continue;
       }
       try {
-        next.push(await readAsDataURL(file));
+        const raw = await readAsDataURL(file);
+        next.push(await compressImage(raw));
       } catch {
         MessagePlugin.error(`读取图片失败：${file.name}`);
       }

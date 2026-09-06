@@ -17,6 +17,7 @@ import { ingestDoc, listDocs, deleteDoc } from "./kb-docs.js";
 import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
+import { moderateImage } from "./moderation.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages, summarizeConversation } from "./deepseek-agent.js";
 
@@ -104,6 +105,10 @@ app.get("/api/check-login", (req, res) => {
 
 // 保存 DeepSeek 配置（环境变量，仅当前进程有效）
 app.post("/api/save-env-config", (req, res) => {
+  // 安全收口：配置了 ADMIN_PASSWORD 时，运行时改 Key 属于管理操作，需管理员凭证
+  if (process.env.ADMIN_PASSWORD && !isAdminRequest(req)) {
+    return res.status(401).json({ error: "公网部署已启用管理鉴权：请登录管理后台（/admin）后再操作" });
+  }
   const { apiKey, baseUrl } = req.body;
 
   if (!apiKey) {
@@ -255,7 +260,7 @@ app.delete("/api/sessions/:sessionId", (req, res) => {
 // ============= 聊天 API =============
 
 // 发送消息并获取流式响应（DeepSeek 函数调用）
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   const { sessionId, message, model, systemPrompt, images } = req.body;
 
   // 图片校验（视觉模型场景，最多 4 张、单张 ≤5MB 的 data URL）
@@ -264,6 +269,13 @@ app.post("/api/chat", async (req, res) => {
     validatedImages = validateImages(images);
   } catch (e: any) {
     return res.status(400).json({ error: e?.message || "图片校验失败" });
+  }
+  // 内容审核钩子（默认关闭，IMAGE_MODERATION=true 启用；返回违规原因则拒绝）
+  for (const img of validatedImages) {
+    const violation = await moderateImage(img);
+    if (violation) {
+      return res.status(400).json({ error: `图片未通过内容审核：${violation}` });
+    }
   }
 
   // 请求日志
@@ -501,12 +513,64 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
+// ============= 接口限流（内存滑动窗口，无外部依赖） =============
+
+const rateBuckets = new Map<string, number[]>();
+function rateLimit(scope: string, limit: number, windowMs: number) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const ip = req.socket.remoteAddress || "unknown";
+    const key = `${scope}:${ip}`;
+    const now = Date.now();
+    const arr = (rateBuckets.get(key) || []).filter(t => now - t < windowMs);
+    if (arr.length >= limit) {
+      return res.status(429).json({ error: "请求过于频繁，请稍后再试" });
+    }
+    arr.push(now);
+    rateBuckets.set(key, arr);
+    if (rateBuckets.size > 5000) {
+      for (const [k, v] of rateBuckets) {
+        if (!v.some(t => now - t < windowMs)) rateBuckets.delete(k);
+      }
+    }
+    next();
+  };
+}
+
+// 登录防爆破：同一 IP 连续失败 5 次锁定 15 分钟
+const LOGIN_MAX_FAILS = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const loginFails = new Map<string, { count: number; lockedUntil: number }>();
+function loginGuard(req: express.Request, res: express.Response) {
+  const ip = req.socket.remoteAddress || "unknown";
+  const state = loginFails.get(ip);
+  if (state && state.lockedUntil > Date.now()) {
+    const secs = Math.ceil((state.lockedUntil - Date.now()) / 1000);
+    res.status(429).json({ error: `失败次数过多，已锁定，请 ${Math.ceil(secs / 60)} 分钟后再试` });
+    return false;
+  }
+  return true;
+}
+function loginFail(req: express.Request) {
+  const ip = req.socket.remoteAddress || "unknown";
+  const state = loginFails.get(ip) || { count: 0, lockedUntil: 0 };
+  state.count += 1;
+  if (state.count >= LOGIN_MAX_FAILS) {
+    state.lockedUntil = Date.now() + LOGIN_LOCK_MS;
+    state.count = 0;
+  }
+  loginFails.set(ip, state);
+}
+function loginSuccess(req: express.Request) {
+  loginFails.delete(req.socket.remoteAddress || "unknown");
+}
+
 // ============= 管理后台鉴权 =============
 // 密码通过 .env 的 ADMIN_PASSWORD 配置；未配置时管理后台与知识库管理 API 整体禁用。
 const ADMIN_TOKEN_TTL = 8 * 60 * 60 * 1000; // 登录有效期 8 小时
 const adminTokens = new Map<string, number>();
 
 app.post("/api/admin/login", (req, res) => {
+  if (!loginGuard(req, res)) return;
   if (!process.env.ADMIN_PASSWORD) {
     return res.status(503).json({ error: "管理后台未启用：请在 .env 中配置 ADMIN_PASSWORD 后重启服务" });
   }
@@ -514,23 +578,28 @@ app.post("/api/admin/login", (req, res) => {
   const a = Buffer.from(String(password || ""));
   const b = Buffer.from(process.env.ADMIN_PASSWORD);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    loginFail(req);
     return res.status(401).json({ error: "密码错误" });
   }
+  loginSuccess(req);
   const token = crypto.randomBytes(32).toString("hex");
   adminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL);
   for (const [t, e] of adminTokens) if (e < Date.now()) adminTokens.delete(t);
   res.json({ success: true, token, expiresIn: ADMIN_TOKEN_TTL });
 });
 
+function isAdminRequest(req: express.Request): boolean {
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const expiresAt = token ? adminTokens.get(token) : undefined;
+  return !!expiresAt && expiresAt >= Date.now();
+}
+
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (!process.env.ADMIN_PASSWORD) {
     return res.status(503).json({ error: "管理后台未启用：请在 .env 中配置 ADMIN_PASSWORD 后重启服务" });
   }
-  const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  const expiresAt = token ? adminTokens.get(token) : undefined;
-  if (!expiresAt || expiresAt < Date.now()) {
-    if (token) adminTokens.delete(token);
+  if (!isAdminRequest(req)) {
     return res.status(401).json({ error: "未登录或登录已过期" });
   }
   next();

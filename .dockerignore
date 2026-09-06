@@ -1,0 +1,11 @@
+node_modules
+dist
+data
+.env
+.env.local
+.git
+.gitignore
+*.log
+*.md
+.github
+scripts

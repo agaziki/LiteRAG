@@ -148,7 +148,7 @@ export function SettingsPage({
 
     setSavingEnv(true);
     try {
-      const response = await fetch('/api/save-env-config', {
+      const response = await adminFetch('/api/save-env-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
