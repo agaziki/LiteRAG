@@ -24,7 +24,7 @@
 
 | # | 项 | 状态 | 说明 |
 |---|-----|------|------|
-| 1 | 真实 Key 端到端回归 | ✅ 已完成 | `npm run e2e:check` 已覆盖 vision 识图、FAQ 工具、思考链、转人工闭环（6/6 通过）；语义检索待配置硅基流动 Key 后补充验证 |
+| 1 | 真实 Key 端到端回归 | ✅ 已完成 | `npm run e2e:check` 已覆盖 vision 识图、FAQ 工具、思考链、转人工闭环（6/6 通过）；语义检索已用真实硅基流动 Key 补充验证：BGE-M3（1024 维）嵌入与无关键词重叠问法的语义命中均通过 |
 | 2 | GitHub Actions CI | ✅ 已完成 | push/PR 自动跑 tsc + npm test + build，已在 GitHub 实际运行并通过（2f830d2） |
 | 3 | 容器化 | ✅ 已完成（v1.3.1） | Dockerfile（多阶段构建，NODE_IMAGE 可参数化适配国内镜像源）+ docker-compose（含健康检查）+ .dockerignore；实测构建镜像并运行，健康检查/静态托管全部通过 |
 | 4 | `/api/save-env-config` 收口 | ✅ 已完成（v1.3.1） | 配置 `ADMIN_PASSWORD` 后自动纳入管理员鉴权，未配置时保持本地开发可用 |
@@ -35,7 +35,7 @@
 
 | # | 项 | 状态 | 说明 |
 |---|-----|------|------|
-| 1 | Rerank 两阶段检索 | ✅ 已完成 | 粗筛 top-20 → `server/rerank.ts` 精排（SiliconFlow `bge-reranker-v2-m3` 风格 /rerank 接口），综合分 = 精排分 ×20 + 原始分 ×0.1；未配置或失败自动回退原排序 |
+| 1 | Rerank 两阶段检索 | ✅ 已完成（含真链路验证：bge-reranker-v2-m3 真实区分度 0.829/0.423/0.000） | 粗筛 top-20 → `server/rerank.ts` 精排（SiliconFlow `bge-reranker-v2-m3` 风格 /rerank 接口），综合分 = 精排分 ×20 + 原始分 ×0.1；未配置或失败自动回退原排序 |
 | 2 | 知识缺口报表 | ✅ 已完成 | 管理后台「知识缺口」标签页：聚合 other 意图 + 低星评价（含评语）+ 转人工原因，「去补充 FAQ」一键预填跳转知识库管理 |
 | 3 | Token 用量统计 | ✅ 已完成 | `stream_options.include_usage` 采集 usage，落库 `token_usage` 表；后台概览 Token/估算成本卡片（`PRICE_*_PER_1M` 折算）、会话详情单会话消耗 |
 | 4 | FAQ 导出 | ✅ 已完成 | `GET /api/faq/export?format=json\|csv\|xlsx`，与导入格式互逆（Excel 带 BOM）；管理后台「导出」下拉下载 |
