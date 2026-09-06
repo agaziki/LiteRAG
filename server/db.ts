@@ -116,6 +116,21 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- Token 用量（每次对话一轮 API 调用一条记录）
+  CREATE TABLE IF NOT EXISTS token_usage (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    message_id TEXT,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
+  CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
 `);
 
 // 数据库迁移：补充列（如果不存在）
@@ -237,6 +252,91 @@ export function deleteSession(id: string): boolean {
 export function setSessionSummary(sessionId: string, summary: string, upto: number): boolean {
   const stmt = db.prepare('UPDATE sessions SET summary = ?, summary_upto = ? WHERE id = ?');
   return stmt.run(summary, upto, sessionId).changes > 0;
+}
+
+// ============= Token 用量 =============
+
+export interface DbTokenUsage {
+  id: string;
+  session_id: string;
+  message_id: string | null;
+  model: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  created_at: string;
+}
+
+export function createTokenUsage(usage: DbTokenUsage): void {
+  db.prepare(`
+    INSERT INTO token_usage (id, session_id, message_id, model, prompt_tokens, completion_tokens, total_tokens, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(usage.id, usage.session_id, usage.message_id, usage.model, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens, usage.created_at);
+}
+
+export interface UsageStats {
+  total: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  daily: Array<{ date: string; prompt_tokens: number; completion_tokens: number; total_tokens: number }>;
+}
+
+/** 全量汇总 + 最近 14 天按日聚合 */
+export function getUsageStats(): UsageStats {
+  const total = db.prepare(`
+    SELECT COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+           COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+           COALESCE(SUM(total_tokens), 0) AS total_tokens
+    FROM token_usage
+  `).get() as UsageStats["total"];
+  const daily = db.prepare(`
+    SELECT substr(created_at, 1, 10) AS date,
+           COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+           COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+           COALESCE(SUM(total_tokens), 0) AS total_tokens
+    FROM token_usage
+    GROUP BY date ORDER BY date DESC LIMIT 14
+  `).all() as UsageStats["daily"];
+  return { total, daily };
+}
+
+export function getUsageBySession(sessionId: string): { prompt_tokens: number; completion_tokens: number; total_tokens: number } {
+  return db.prepare(`
+    SELECT COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+           COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+           COALESCE(SUM(total_tokens), 0) AS total_tokens
+    FROM token_usage WHERE session_id = ?
+  `).get(sessionId) as { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
+
+// ============= 知识缺口聚合（运营报表） =============
+
+export interface KnowledgeGap {
+  id: string;
+  title: string;
+  updated_at: string;
+  other_intents: number;
+  low_ratings: number;
+  low_rating_detail: string | null;
+  escalations: number;
+  escalation_reasons: string | null;
+}
+
+/** 知识缺口清单：命中任一信号（other 意图 / 低星评价 / 转人工）的会话 */
+export function getKnowledgeGaps(): KnowledgeGap[] {
+  return db.prepare(`
+    SELECT s.id, s.title, s.updated_at,
+      (SELECT COUNT(*) FROM session_intents si WHERE si.session_id = s.id AND si.intent = 'other') AS other_intents,
+      (SELECT COUNT(*) FROM ratings r WHERE r.session_id = s.id AND r.rating <= 3) AS low_ratings,
+      (SELECT GROUP_CONCAT(r.rating || '星' || CASE WHEN r.comment IS NOT NULL AND r.comment != '' THEN '：' || r.comment ELSE '' END, '；')
+         FROM ratings r WHERE r.session_id = s.id AND r.rating <= 3) AS low_rating_detail,
+      (SELECT COUNT(*) FROM escalations e WHERE e.session_id = s.id) AS escalations,
+      (SELECT GROUP_CONCAT(e.reason, '；') FROM escalations e WHERE e.session_id = s.id) AS escalation_reasons
+    FROM sessions s
+    WHERE EXISTS (SELECT 1 FROM session_intents si WHERE si.session_id = s.id AND si.intent = 'other')
+       OR EXISTS (SELECT 1 FROM ratings r WHERE r.session_id = s.id AND r.rating <= 3)
+       OR EXISTS (SELECT 1 FROM escalations e WHERE e.session_id = s.id)
+    ORDER BY s.updated_at DESC
+    LIMIT 200
+  `).all() as KnowledgeGap[];
 }
 
 // ============= 消息操作 =============

@@ -5,7 +5,7 @@ import {
 } from 'tdesign-react';
 import {
   MessageSquare, Headphones, Star, TrendingUp, Users,
-  RefreshCw, ArrowLeft, User, Bot as BotIcon, AlertCircle, KeyRound, LogOut,
+  RefreshCw, ArrowLeft, User, Bot as BotIcon, AlertCircle, KeyRound, LogOut, Zap,
 } from 'lucide-react';
 import { ChatMarkdown } from '@tdesign-react/chat';
 import { FaqManager } from '../components/FaqManager';
@@ -33,6 +33,8 @@ interface AdminStats {
     ratingAverage: number;
     recentRatingAverage: number;
     totalRatings: number;
+    totalTokens: number;
+    estimatedCost: number;
   };
   ratingDistribution: { rating: number; count: number }[];
   intentDistribution: { intent: string; count: number }[];
@@ -91,6 +93,11 @@ interface SessionDetail {
     confidence: string | null;
     created_at: string;
   }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }
 
 const INTENT_LABELS: Record<string, string> = {
@@ -100,6 +107,18 @@ const INTENT_LABELS: Record<string, string> = {
 const INTENT_COLORS: Record<string, string> = {
   refund: '#e37318', order: '#0052d9', tech: '#7b61ff', general: '#2ba471', other: '#909399',
 };
+
+// ============ 知识缺口 ============
+interface KnowledgeGap {
+  id: string;
+  title: string;
+  updated_at: string;
+  other_intents: number;
+  low_ratings: number;
+  low_rating_detail: string | null;
+  escalations: number;
+  escalation_reasons: string | null;
+}
 
 const ESCALATION_STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   pending: { label: '排队中', color: '#e37318' },
@@ -114,8 +133,10 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [intentFilter, setIntentFilter] = useState<string>('');
-  // 顶部标签：对话分析 / 知识库管理 / 系统设置
-  const [tab, setTab] = useState<'analytics' | 'faq' | 'settings'>('analytics');
+  // 顶部标签：对话分析 / 知识缺口 / 知识库管理 / 系统设置
+  const [tab, setTab] = useState<'analytics' | 'gaps' | 'faq' | 'settings'>('analytics');
+  // 知识缺口 → 知识库管理 的预填问题
+  const [prefillQuestion, setPrefillQuestion] = useState('');
 
   // 管理员登录（密码通过 .env 的 ADMIN_PASSWORD 配置）
   const [authed, setAuthed] = useState<boolean>(() => !!getAdminToken());
@@ -235,6 +256,28 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
       setReplySending(false);
     }
   }, [detail, replyText, openDetail]);
+
+  // 知识缺口清单
+  const [gaps, setGaps] = useState<KnowledgeGap[] | null>(null);
+  const [gapsLoading, setGapsLoading] = useState(false);
+
+  const fetchGaps = useCallback(async () => {
+    setGapsLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/knowledge-gaps');
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      const data = await res.json();
+      setGaps(data.gaps || []);
+    } catch {
+      MessagePlugin.error('加载知识缺口失败');
+    } finally {
+      setGapsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authed && tab === 'gaps' && gaps === null) fetchGaps();
+  }, [authed, tab, gaps, fetchGaps]);
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -378,6 +421,14 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
               <Button
                 size="small"
                 theme="primary"
+                variant={tab === 'gaps' ? 'base' : 'outline'}
+                onClick={() => setTab('gaps')}
+              >
+                知识缺口
+              </Button>
+              <Button
+                size="small"
+                theme="primary"
                 variant={tab === 'faq' ? 'base' : 'outline'}
                 onClick={() => setTab('faq')}
               >
@@ -406,10 +457,60 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
           </Tooltip>
         </div>
 
-        {tab === 'settings' ? (
+        {tab === 'gaps' ? (
+          <div className="space-y-4">
+            <Card bordered size="small">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  知识库盲区清单：命中「其他意图 / 低星评价（≤3 星）/ 转人工」任一信号的会话，建议针对这些问题补充 FAQ 条目
+                </div>
+                <Button size="small" variant="outline" onClick={fetchGaps} loading={gapsLoading}>
+                  <RefreshCw size={13} style={{ marginRight: 4 }} />
+                  刷新
+                </Button>
+              </div>
+            </Card>
+            {gapsLoading ? (
+              <div className="flex justify-center py-16"><Loading size="large" /></div>
+            ) : !gaps || gaps.length === 0 ? (
+              <Card bordered><Empty description="暂无知识缺口——没有命中信号的会话" /></Card>
+            ) : (
+              gaps.map(g => (
+                <Card key={g.id} bordered size="small">
+                  <div className="flex items-start gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm" style={{ color: 'var(--td-text-color-primary)' }}>{g.title}</span>
+                        {g.other_intents > 0 && <Tag size="small" color="warning" style={{ color: '#e37318' }}>其他意图 ×{g.other_intents}</Tag>}
+                        {g.low_ratings > 0 && <Tag size="small" color="danger" style={{ color: 'var(--td-error-color)' }}>低星评价 ×{g.low_ratings}</Tag>}
+                        {g.escalations > 0 && <Tag size="small" color="primary" style={{ color: 'var(--td-brand-color)' }}>转人工 ×{g.escalations}</Tag>}
+                      </div>
+                      {g.low_rating_detail && (
+                        <div className="text-xs mt-1.5" style={{ color: 'var(--td-text-color-secondary)' }}>评价：{g.low_rating_detail}</div>
+                      )}
+                      {g.escalation_reasons && (
+                        <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>转人工：{g.escalation_reasons}</div>
+                      )}
+                    </div>
+                    <Button
+                      size="small"
+                      variant="outline"
+                      onClick={() => { setPrefillQuestion(g.title); setTab('faq'); }}
+                    >
+                      去补充 FAQ
+                    </Button>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        ) : tab === 'settings' ? (
           <SettingsPage agents={agents} onAdd={onAdd} onUpdate={onUpdate} onDelete={onDelete} />
         ) : tab === 'faq' ? (
-          <FaqManager />
+          <FaqManager
+            prefillQuestion={prefillQuestion}
+            onPrefillConsumed={() => setPrefillQuestion('')}
+          />
         ) : loading ? (
           <div className="flex justify-center py-20"><Loading size="large" /></div>
         ) : stats ? (
@@ -443,6 +544,20 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 label="转人工解决率"
                 value={stats.overview.totalEscalations > 0 ? `${Math.round((stats.overview.resolvedEscalations / stats.overview.totalEscalations) * 100)}%` : '-'}
                 sub={`${stats.overview.resolvedEscalations} / ${stats.overview.totalEscalations} 已解决`}
+              />
+              <StatCard
+                icon={<Zap size={20} />}
+                color="#7b61ff"
+                label="Token 消耗"
+                value={stats.overview.totalTokens > 0 ? stats.overview.totalTokens.toLocaleString() : '0'}
+                sub={`输入 + 输出 tokens`}
+              />
+              <StatCard
+                icon={<TrendingUp size={20} />}
+                color="#0594fa"
+                label="估算成本"
+                value={stats.overview.estimatedCost > 0 ? `¥${stats.overview.estimatedCost}` : '-'}
+                sub={stats.overview.estimatedCost > 0 ? '按 .env 单价折算' : '配置 PRICE_*_PER_1M 后显示'}
               />
             </div>
 
@@ -576,6 +691,14 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 <span style={{ color: 'var(--td-text-color-secondary)' }}>最后更新：</span>
                 <span style={{ color: 'var(--td-text-color-primary)' }}>{formatTime(detail.session.updated_at)}</span>
               </div>
+              {detail.usage && (
+                <div>
+                  <span style={{ color: 'var(--td-text-color-secondary)' }}>Token 消耗：</span>
+                  <span style={{ color: 'var(--td-text-color-primary)' }}>
+                    {detail.usage.total_tokens.toLocaleString()}（输入 {detail.usage.prompt_tokens.toLocaleString()} / 输出 {detail.usage.completion_tokens.toLocaleString()}）
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* 转人工记录 */}

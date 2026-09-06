@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Card, Button, Tag, Input, Textarea, TagInput, Dialog, Popconfirm,
-  Select, Loading, Empty, MessagePlugin, Radio,
+  Select, Loading, Empty, MessagePlugin, Radio, Dropdown,
 } from 'tdesign-react';
 import { Plus, RefreshCw, Search, Pencil, Trash2, Database, Sparkles, Upload, Download, FileText, FilePlus2 } from 'lucide-react';
 import { adminFetch, handleAuthExpired } from '../utils/adminAuth';
@@ -58,7 +58,13 @@ interface KbDoc {
 
 // ============ 组件 ============
 
-export function FaqManager() {
+interface FaqManagerProps {
+  /** 知识缺口跳转预填的问题（消费后回调清空） */
+  prefillQuestion?: string;
+  onPrefillConsumed?: () => void;
+}
+
+export function FaqManager({ prefillQuestion, onPrefillConsumed }: FaqManagerProps) {
   const [data, setData] = useState<FaqData | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -108,6 +114,20 @@ export function FaqManager() {
   }, []);
 
   useEffect(() => { fetchFaq(); }, [fetchFaq]);
+
+  // 知识缺口跳转：预填问题并打开新增条目弹窗
+  useEffect(() => {
+    if (prefillQuestion && data) {
+      setItemForm({
+        question: prefillQuestion,
+        answer: '',
+        tags: [],
+        categoryId: data.categories[0]?.id || '',
+      });
+      setItemDialog({ mode: 'add', categoryId: data.categories[0]?.id || '' });
+      onPrefillConsumed?.();
+    }
+  }, [prefillQuestion, data, onPrefillConsumed]);
 
   // ---- 检索测试 ----
   const runTest = useCallback(async () => {
@@ -280,6 +300,28 @@ export function FaqManager() {
     window.open('/api/faq/import/template', '_blank');
   };
 
+  // 导出知识库（JSON 完整备份 / CSV / Excel，与导入格式互逆）
+  const downloadExport = useCallback(async (format: string) => {
+    try {
+      const res = await adminFetch(`/api/faq/export?format=${format}`);
+      if (handleAuthExpired(res)) { MessagePlugin.warning('登录已过期，请重新登录'); return; }
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        MessagePlugin.error(j.error || '导出失败');
+        return;
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `faq-export-${new Date().toISOString().slice(0, 10)}.${format}`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      MessagePlugin.success(`已导出 ${format.toUpperCase()}`);
+    } catch {
+      MessagePlugin.error('网络错误，导出失败');
+    }
+  }, []);
+
   // ---- 文档知识库（RAG） ----
   const fetchDocs = useCallback(async () => {
     try {
@@ -370,6 +412,20 @@ export function FaqManager() {
               <Upload size={13} style={{ marginRight: 4 }} />
               导入
             </Button>
+            <Dropdown
+              trigger="click"
+              options={[
+                { content: 'JSON（完整备份）', value: 'json' },
+                { content: 'CSV（表格）', value: 'csv' },
+                { content: 'Excel（表格）', value: 'xlsx' },
+              ]}
+              onClick={(data: any) => downloadExport(String(data.value))}
+            >
+              <Button size="small" variant="outline">
+                <Download size={13} style={{ marginRight: 4 }} />
+                导出
+              </Button>
+            </Dropdown>
             <Button size="small" variant="outline" onClick={() => { setCatForm({ name: '', keywords: [] }); setCatDialog({ mode: 'add' }); }}>
               <Plus size={13} style={{ marginRight: 4 }} />
               新增分类

@@ -16,6 +16,26 @@ interface ChatMessagesProps {
   onRefreshMessages?: (sessionId: string) => void;
 }
 
+/** 从 search_faq 工具调用中提取参考来源（去重） */
+function collectSources(m: Message): Array<{ key: string; label: string; detail: string }> {
+  const map = new Map<string, { key: string; label: string; detail: string }>();
+  for (const tc of m.toolCalls || []) {
+    if (tc.name !== 'search_faq' || !tc.result) continue;
+    try {
+      const j = JSON.parse(tc.result);
+      for (const r of j.results || []) {
+        const key = r.type === 'doc' ? `doc:${r.id}` : `faq:${r.id}`;
+        if (!map.has(key)) {
+          map.set(key, r.type === 'doc'
+            ? { key, label: `《${r.docName}》${r.title || '正文片段'}`, detail: r.excerpt }
+            : { key, label: r.question, detail: r.answer });
+        }
+      }
+    } catch { /* 忽略损坏的结果 */ }
+  }
+  return [...map.values()];
+}
+
 export function ChatMessages({
   messages,
   models,
@@ -220,6 +240,38 @@ export function ChatMessages({
 
             {/* 助手消息 - 按顺序渲染内容块（人工回复已在上方单独渲染） */}
             {message.role === 'assistant' && message.model !== 'human-agent' && renderAssistantContent(message)}
+
+            {/* 参考来源（答案引用溯源）：从 search_faq 工具调用结果提取 */}
+            {message.role === 'assistant' && message.model !== 'human-agent' && (() => {
+              const sources = collectSources(message);
+              if (sources.length === 0 || message.isStreaming) return null;
+              return (
+                <details
+                  className="w-full rounded-lg"
+                  style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+                >
+                  <summary
+                    className="text-xs px-3 py-1.5 cursor-pointer select-none"
+                    style={{ color: 'var(--td-text-color-secondary)' }}
+                  >
+                    参考来源（{sources.length}）
+                  </summary>
+                  <div className="px-3 pb-2 space-y-1.5">
+                    {sources.map(s => (
+                      <div key={s.key} className="text-xs leading-5">
+                        <div style={{ color: 'var(--td-text-color-primary)' }}>📄 {s.label}</div>
+                        <div
+                          className="line-clamp-2 mt-0.5"
+                          style={{ color: 'var(--td-text-color-secondary)' }}
+                        >
+                          {s.detail}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              );
+            })()}
             
             {/* 思考中状态（没有任何内容时显示） */}
             {message.role === 'assistant' && message.isStreaming && 

@@ -21,6 +21,8 @@ const __dirname = path.dirname(__filename);
 
 /** 单块目标长度（中文字符） */
 const CHUNK_SIZE = 500;
+/** 相邻块重叠字符数：保留上一块尾部，避免关键句被切分边界截断 */
+const CHUNK_OVERLAP = 60;
 /** 单文档块数上限，防止异常大文档拖垮检索 */
 const MAX_CHUNKS_PER_DOC = 2000;
 
@@ -115,8 +117,8 @@ function splitLong(para: string): string[] {
 }
 
 /**
- * 分块策略：Markdown 按标题切节（标题路径作为块标题），纯文本按段落聚合；
- * 单块不超过 CHUNK_SIZE，段落间不重叠（块标题已提供上下文）。
+ * 分块策略：Markdown 按标题切节（保留「H1 > H2 > H3」完整标题层级路径作为块标题），
+ * 纯文本按段落聚合；单块不超过 CHUNK_SIZE，相邻块携带 CHUNK_OVERLAP 字符重叠。
  */
 export function chunkText(text: string): RawChunk[] {
   const cleaned = text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
@@ -127,13 +129,18 @@ export function chunkText(text: string): RawChunk[] {
   const sections: Array<{ title: string | null; paragraphs: string[] }> = [];
 
   if (hasHeadings) {
-    let title: string | null = null;
+    // 标题层级栈：保留完整父级路径（如「退款政策 > 退款时效 > 退款方式」）
+    const stack: string[] = [];
     let paras: string[] = [];
-    const push = () => { if (paras.some(p => p.trim())) sections.push({ title, paragraphs: paras }); paras = []; };
+    const push = () => { if (paras.some(p => p.trim())) sections.push({ title: stack.filter(Boolean).join(' > ') || null, paragraphs: paras }); paras = []; };
     for (const line of lines) {
       const m = line.trim().match(/^(#{1,4})\s+(.+)$/);
-      if (m) { push(); title = m[2].trim(); }
-      else paras.push(line);
+      if (m) {
+        push();
+        const level = m[1].length;
+        stack.length = level - 1;
+        stack[level - 1] = m[2].trim();
+      } else paras.push(line);
     }
     push();
   } else {
@@ -144,15 +151,22 @@ export function chunkText(text: string): RawChunk[] {
   for (const s of sections) {
     const paras = s.paragraphs.map(p => p.trim()).filter(Boolean);
     if (!paras.length) continue;
+    const pieces: string[] = [];
+    for (const p of paras) pieces.push(...splitLong(p));
+
+    // 聚合 pieces 为 ≤CHUNK_SIZE 的块；被切开的相邻块携带上一块尾部 overlap（计入预算）
     let buf = '';
-    const flush = () => { if (buf.trim()) chunks.push({ title: s.title, content: buf.trim() }); buf = ''; };
-    for (const p of paras) {
-      for (const piece of splitLong(p)) {
-        if (buf && buf.length + piece.length + 1 > CHUNK_SIZE) flush();
-        buf = buf ? `${buf}\n${piece}` : piece;
+    let carry = '';
+    for (const piece of pieces) {
+      const budget = CHUNK_SIZE - (carry ? carry.length + 1 : 0);
+      if (buf && buf.length + 1 + piece.length > budget) {
+        chunks.push({ title: s.title, content: (carry ? carry + '\n' : '') + buf.trim() });
+        carry = buf.trim().slice(-CHUNK_OVERLAP);
+        buf = '';
       }
+      buf = buf ? `${buf}\n${piece}` : piece;
     }
-    flush();
+    if (buf.trim()) chunks.push({ title: s.title, content: (carry ? carry + '\n' : '') + buf.trim() });
   }
   return chunks;
 }

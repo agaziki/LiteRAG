@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { embedTexts, isEmbeddingEnabled, getEmbeddingConfig, SEMANTIC_WEIGHT, SEMANTIC_THRESHOLD } from './embeddings.js';
 import { searchDocChunks } from './kb-docs.js';
+import { isRerankEnabled, rerankDocuments, RERANK_WEIGHT } from './rerank.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,7 +38,8 @@ function getFaqPath(): string {
 }
 
 let cachedFaq: FaqData | null = null;
-let cachedMtime = 0;
+let cachedMtimeMs = 0;
+let cachedSize = 0;
 
 function loadFaq(): FaqData {
   const faqPath = getFaqPath();
@@ -52,10 +54,12 @@ function loadFaq(): FaqData {
     persistFaq(skeleton);
   }
   const stat = fs.statSync(faqPath);
-  if (!cachedFaq || stat.mtimeMs !== cachedMtime) {
+  // mtime + size 双重校验：同一毫秒内的连续写入也能感知（避免缓存滞留）
+  if (!cachedFaq || stat.mtimeMs !== cachedMtimeMs || stat.size !== cachedSize) {
     const raw = fs.readFileSync(faqPath, 'utf-8');
     cachedFaq = JSON.parse(raw) as FaqData;
-    cachedMtime = stat.mtimeMs;
+    cachedMtimeMs = stat.mtimeMs;
+    cachedSize = stat.size;
     console.log(`[FAQ] Loaded ${cachedFaq.categories.reduce((sum, c) => sum + c.items.length, 0)} items from ${cachedFaq.categories.length} categories`);
   }
   return cachedFaq;
@@ -70,7 +74,8 @@ function persistFaq(faq: FaqData): void {
   fs.writeFileSync(tmp, JSON.stringify(faq, null, 2), 'utf-8');
   fs.renameSync(tmp, faqPath);
   cachedFaq = null;
-  cachedMtime = 0;
+  cachedMtimeMs = 0;
+  cachedSize = 0;
 }
 
 export type KnowledgeResultType = 'faq' | 'doc';
@@ -164,7 +169,7 @@ export async function searchKnowledge(query: string, limit = 5): Promise<Knowled
     }
   }
 
-  const results: KnowledgeResult[] = [];
+  let results: KnowledgeResult[] = [];
   for (const { item, category, kwScore } of all) {
     let semantic = 0;
     if (vectors && queryVector) {
@@ -202,6 +207,32 @@ export async function searchKnowledge(query: string, limit = 5): Promise<Knowled
       }
     } catch (e: any) {
       console.error(`[FAQ] 文档块检索失败: ${e?.message || e}`);
+    }
+  }
+
+  // Rerank 两阶段精排（可选）：对当前排序的前 20 条候选用精排模型重排序；
+  // 精排失败或未配置时保持原排序
+  if (isRerankEnabled() && results.length > 1) {
+    try {
+      const top = results.slice(0, 20);
+      const documents = top.map(r =>
+        r.type === 'faq' ? `${r.question}\n${r.answer}` : `${r.category} ${r.title ?? ''}\n${r.answer}`
+      );
+      const ranked = await rerankDocuments(query, documents, top.length);
+      if (ranked) {
+        const reranked = ranked
+          .filter(({ index }) => index >= 0 && index < top.length)
+          .map(({ index, score }) => {
+            const r = top[index];
+            return {
+              ...r,
+              score: Math.round((RERANK_WEIGHT * score + r.score * 0.1) * 100) / 100,
+            };
+          });
+        results = [...reranked, ...results.slice(top.length)];
+      }
+    } catch (e: any) {
+      console.error(`[FAQ] 精排失败，保持原排序: ${e?.message || e}`);
     }
   }
 

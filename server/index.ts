@@ -451,8 +451,22 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
           isError,
         })}\n\n`);
       },
-      onDone: ({ duration, turns }) => {
-        console.log(`[Chat] 完成: ${turns} 轮, ${duration}ms`);
+      onDone: ({ duration, turns, usage }) => {
+        console.log(`[Chat] 完成: ${turns} 轮, ${duration}ms, tokens=${usage.total_tokens}`);
+        try {
+          db.createTokenUsage({
+            id: uuidv4(),
+            session_id: session.id,
+            message_id: assistantMessageId,
+            model: selectedModel,
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            created_at: new Date().toISOString(),
+          });
+        } catch (e: any) {
+          console.error(`[Chat] 用量记录失败:`, e?.message);
+        }
         res.write(`data: ${JSON.stringify({ type: "done", duration, turns })}\n\n`);
       },
       onError: (error) => {
@@ -636,6 +650,53 @@ app.get("/api/faq", (req, res) => {
     res.json({ ...listAllFaq(), semantic: isEmbeddingEnabled() });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取 FAQ 失败" });
+  }
+});
+
+// 导出知识库（与导入格式互逆，形成备份-迁移闭环）
+app.get("/api/faq/export", async (req, res) => {
+  try {
+    const format = String(req.query.format || "json").toLowerCase();
+    const faq = listAllFaq();
+    const stamp = new Date().toISOString().slice(0, 10);
+
+    if (format === "json") {
+      res.setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="faq-export-${stamp}.json"`);
+      return res.send(JSON.stringify(faq, null, 2));
+    }
+
+    if (format === "csv" || format === "xlsx") {
+      // 列结构与导入模板一致，可直接改后重新导入
+      const rows: string[][] = [["分类", "问题", "答案", "标签", "关键词"]];
+      for (const c of faq.categories) {
+        for (const item of c.items) {
+          rows.push([c.name, item.question, item.answer, item.tags.join(","), c.keywords.join(",")]);
+        }
+      }
+
+      if (format === "csv") {
+        const esc = (s: string) => (/[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+        const csv = "\ufeff" + rows.map(r => r.map(esc).join(",")).join("\r\n");
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="faq-export-${stamp}.csv"`);
+        return res.send(csv);
+      }
+
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("FAQ");
+      for (const row of rows) ws.addRow(row);
+      const buf = Buffer.from(await wb.xlsx.writeBuffer());
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="faq-export-${stamp}.xlsx"`);
+      return res.send(buf);
+    }
+
+    res.status(400).json({ error: "不支持的导出格式（json/csv/xlsx）" });
+  } catch (error: any) {
+    console.error("[FAQ Admin] 导出失败:", error?.message);
+    res.status(500).json({ error: error?.message || "导出失败" });
   }
 });
 
@@ -908,6 +969,11 @@ app.get("/api/admin/stats", (req, res) => {
     const totalEscalations = allEscalations.length;
     const resolvedEscalations = allEscalations.filter(e => e.status === 'resolved').length;
 
+    const usage = db.getUsageStats();
+    const priceInput = parseFloat(process.env.PRICE_INPUT_PER_1M || "0") || 0;
+    const priceOutput = parseFloat(process.env.PRICE_OUTPUT_PER_1M || "0") || 0;
+    const estimatedCost = (usage.total.prompt_tokens / 1e6) * priceInput + (usage.total.completion_tokens / 1e6) * priceOutput;
+
     res.json({
       overview: {
         totalSessions,
@@ -920,6 +986,8 @@ app.get("/api/admin/stats", (req, res) => {
         ratingAverage: ratingStats.average,
         recentRatingAverage: ratingStats.recentAverage,
         totalRatings: ratingStats.total,
+        totalTokens: usage.total.total_tokens,
+        estimatedCost: Math.round(estimatedCost * 10000) / 10000,
       },
       ratingDistribution: ratingStats.distribution,
       intentDistribution: intentStats,
@@ -946,10 +1014,46 @@ app.get("/api/admin/sessions/:sessionId", (req, res) => {
     const ratings = db.getRatingsBySession(sessionId);
     const escalations = db.getEscalationsBySession(sessionId);
     const intents = db.getIntentsBySession(sessionId);
-    res.json({ session, messages, ratings, escalations, intents });
+    const usage = db.getUsageBySession(sessionId);
+    res.json({ session, messages, ratings, escalations, intents, usage });
   } catch (error: any) {
     console.error("[Admin Session] Error:", error);
     res.status(500).json({ error: error?.message || "获取会话详情失败" });
+  }
+});
+
+// ============= 管理后台统计 API =============
+
+// Token 用量（全量汇总 + 最近 14 天按日 + 成本估算）
+app.get("/api/admin/usage", (req, res) => {
+  try {
+    const stats = db.getUsageStats();
+    const priceInput = parseFloat(process.env.PRICE_INPUT_PER_1M || "0") || 0;
+    const priceOutput = parseFloat(process.env.PRICE_OUTPUT_PER_1M || "0") || 0;
+    const costOf = (p: number, c: number) =>
+      Math.round(((p / 1e6) * priceInput + (c / 1e6) * priceOutput) * 10000) / 10000;
+    res.json({
+      total: {
+        ...stats.total,
+        estimated_cost: costOf(stats.total.prompt_tokens, stats.total.completion_tokens),
+      },
+      price: { input_per_1m: priceInput, output_per_1m: priceOutput },
+      daily: stats.daily.map(d => ({
+        ...d,
+        estimated_cost: costOf(d.prompt_tokens, d.completion_tokens),
+      })),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "获取用量失败" });
+  }
+});
+
+// 知识缺口清单（other 意图 / 低星评价 / 转人工会话聚合）
+app.get("/api/admin/knowledge-gaps", (req, res) => {
+  try {
+    res.json({ gaps: db.getKnowledgeGaps() });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "获取知识缺口失败" });
   }
 });
 

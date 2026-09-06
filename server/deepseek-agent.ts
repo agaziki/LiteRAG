@@ -20,6 +20,12 @@ export interface AgentMessage {
   content: string;
 }
 
+export interface RunUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
 export interface AgentToolCall {
   id: string;
   name: string;
@@ -41,7 +47,7 @@ export interface RunAgentOptions {
   onText: (chunk: string) => void;
   onToolStart: (id: string, name: string, input: Record<string, unknown>) => void;
   onToolResult: (id: string, result: string, isError: boolean) => void;
-  onDone: (info: { duration: number; turns: number }) => void;
+  onDone: (info: { duration: number; turns: number; usage: RunUsage }) => void;
   onError: (error: Error) => void;
   signal?: AbortSignal;
 }
@@ -298,13 +304,15 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
   ];
 
   let totalTurns = 0;
+  // Token 用量：跨 Agent 轮次累加（每轮一次 API 调用）
+  const runUsage: RunUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
       totalTurns++;
       if (signal?.aborted) throw new Error("已取消");
 
-      // 调用 DeepSeek 流式接口
+      // 调用 DeepSeek 流式接口（include_usage：流末尾返回本次调用的 token 用量）
       const stream = await client.chat.completions.create(
         {
           model,
@@ -312,6 +320,7 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
           tools: TOOLS,
           tool_choice: "auto",
           stream: true,
+          stream_options: { include_usage: true },
         },
         { signal }
       );
@@ -321,6 +330,12 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
       const toolAccum: Record<number, { id: string; name: string; arguments: string }> = {};
 
       for await (const chunk of stream) {
+        // 用量块（choices 为空，位于流末尾）
+        if (chunk.usage) {
+          runUsage.prompt_tokens += chunk.usage.prompt_tokens || 0;
+          runUsage.completion_tokens += chunk.usage.completion_tokens || 0;
+          runUsage.total_tokens += chunk.usage.total_tokens || 0;
+        }
         const delta = chunk.choices?.[0]?.delta;
         if (!delta) continue;
 
@@ -389,7 +404,7 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
       // 继续下一轮，让模型基于工具结果生成回复
     }
 
-    onDone({ duration: Date.now() - startedAt, turns: totalTurns });
+    onDone({ duration: Date.now() - startedAt, turns: totalTurns, usage: runUsage });
   } catch (error: any) {
     onError(error instanceof Error ? error : new Error(String(error)));
   }

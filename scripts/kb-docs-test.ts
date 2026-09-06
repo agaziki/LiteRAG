@@ -51,9 +51,11 @@ console.log('\n[1] 分块策略');
   const chunks = docs.chunkText(md);
   assert(chunks.length === 4, '标题切节 + 超长合并切分 → 4 块', chunks.map(c => c.title));
   assert(chunks[0].title === '退款政策' && chunks[0].content.includes('七天无理由'), '标题作为块标题', chunks[0]);
-  assert(chunks[1].title === '退款时效' && chunks[1].content.length <= 500 && chunks[2].title === '退款时效',
-    '超长章节切成多块且不超过 500 字', { len1: chunks[1].content.length, len2: chunks[2].content.length });
-  assert(chunks[3].title === '联系方式', '后续章节标题正确', chunks[3]);
+  assert(chunks[1].title === '退款政策 > 退款时效' && chunks[1].content.length <= 500 && chunks[2].title === '退款政策 > 退款时效',
+    '超长章节切成多块（≤500 字）且标题为完整层级路径', { t: chunks[1].title, l1: chunks[1].content.length, l2: chunks[2].content.length });
+  assert(chunks[1].content === 'A'.repeat(300) && chunks[2].content.startsWith('A'.repeat(60) + '\n'),
+    '相邻块携带 60 字符 overlap（chunk2 以 chunk1 尾部开头）', chunks[2].content.slice(0, 70));
+  assert(chunks[3].title === '退款政策 > 联系方式', '后续章节标题正确', chunks[3]);
 
   const plain = Array.from({ length: 50 }, (_, i) => `这是第${i}段内容，包含一些说明文字。`).join('\n\n');
   const plainChunks = docs.chunkText(plain);
