@@ -339,6 +339,59 @@ export function getKnowledgeGaps(): KnowledgeGap[] {
   `).all() as KnowledgeGap[];
 }
 
+// ============= 数据管理（管理后台） =============
+
+export interface DataStats {
+  sessions: number;
+  messages: number;
+  ratings: number;
+  escalations: number;
+  session_intents: number;
+  token_usage: number;
+  docs: number;
+  chunks: number;
+}
+
+/** 数据规模统计（数据管理页展示用；FAQ 分类/条目数由路由层从知识库 JSON 补充） */
+export function getDataStats(): DataStats {
+  const count = (sql: string) => (db.prepare(sql).get() as { c: number }).c;
+  return {
+    sessions: count('SELECT COUNT(*) c FROM sessions'),
+    messages: count('SELECT COUNT(*) c FROM messages'),
+    ratings: count('SELECT COUNT(*) c FROM ratings'),
+    escalations: count('SELECT COUNT(*) c FROM escalations'),
+    session_intents: count('SELECT COUNT(*) c FROM session_intents'),
+    token_usage: count('SELECT COUNT(*) c FROM token_usage'),
+    docs: count('SELECT COUNT(*) c FROM kb_docs'),
+    chunks: count('SELECT COUNT(*) c FROM kb_chunks'),
+  };
+}
+
+/**
+ * 清理会话：olderThanDays 缺省时清空全部。
+ * 级联删除消息/评价/转人工/意图（外键）；token_usage 无外键，显式清理。
+ */
+export function clearSessions(olderThanDays?: number): number {
+  let ids: Array<{ id: string }>;
+  if (olderThanDays && olderThanDays > 0) {
+    const cutoff = new Date(Date.now() - olderThanDays * 86400000).toISOString();
+    ids = db.prepare('SELECT id FROM sessions WHERE updated_at < ?').all(cutoff) as Array<{ id: string }>;
+  } else {
+    ids = db.prepare('SELECT id FROM sessions').all() as Array<{ id: string }>;
+  }
+  if (ids.length === 0) return 0;
+  const delUsage = db.prepare('DELETE FROM token_usage WHERE session_id = ?');
+  const delSession = db.prepare('DELETE FROM sessions WHERE id = ?');
+  const tx = db.transaction(() => {
+    for (const { id } of ids) {
+      delUsage.run(id);
+      delSession.run(id);
+    }
+  });
+  tx();
+  return ids.length;
+}
+
 // ============= 消息操作 =============
 
 // 获取会话的所有消息

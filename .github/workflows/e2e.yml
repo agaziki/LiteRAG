@@ -1,0 +1,48 @@
+name: E2E
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # 每日 UTC 18:00 = 北京时间 02:00
+  workflow_dispatch:        # 支持面板手动触发
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 启动服务（注入 Secrets 配置的 Key）
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+          EMBEDDING_BASE_URL: ${{ secrets.EMBEDDING_BASE_URL }}
+          EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
+          RERANK_API_KEY: ${{ secrets.RERANK_API_KEY }}
+          RERANK_BASE_URL: ${{ secrets.RERANK_BASE_URL }}
+          RERANK_MODEL: ${{ secrets.RERANK_MODEL }}
+        run: |
+          npx tsx server/index.ts > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/health > /dev/null; then
+              echo "服务已就绪"
+              break
+            fi
+            sleep 2
+          done
+          curl -sf http://localhost:3000/api/health
+
+      - name: 运行 E2E 回归（6 项真链路）
+        run: npm run e2e:check
+
+      - name: 输出服务日志（失败时排查）
+        if: failure()
+        run: cat server.log

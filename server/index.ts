@@ -17,6 +17,7 @@ import { ingestDoc, listDocs, deleteDoc } from "./kb-docs.js";
 import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
+import { resetFaqToFactory, clearFaqAll } from "./faq.js";
 import { moderateImage } from "./moderation.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages, summarizeConversation } from "./deepseek-agent.js";
@@ -622,6 +623,53 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 // /api/admin/* 与 /api/faq/*（知识库检索/管理）均需管理员登录；登录路由已在上方注册，不受影响
 app.use("/api/admin", requireAdmin);
 app.use("/api/faq", requireAdmin);
+
+// ============= 数据管理（管理后台） =============
+
+// 数据规模统计
+app.get("/api/admin/data-stats", (req, res) => {
+  try {
+    const stats = db.getDataStats();
+    const faq = listAllFaq();
+    res.json({
+      ...stats,
+      faq_categories: faq.categories.length,
+      faq_items: faq.categories.reduce((sum, c) => sum + c.items.length, 0),
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "获取数据统计失败" });
+  }
+});
+
+// 清理会话：body.days 缺省清空全部，指定天数则清理该天数前的会话
+app.post("/api/admin/sessions/clear", (req, res) => {
+  try {
+    const days = Number(req.body?.days || 0);
+    const cleared = db.clearSessions(days > 0 ? days : undefined);
+    console.log(`[Admin] 会话清理: ${cleared} 个（${days > 0 ? days + ' 天前' : '全部'}）`);
+    res.json({ success: true, cleared });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "清理会话失败" });
+  }
+});
+
+// 知识库重置：factory=恢复出厂 / clear=清空全部
+app.post("/api/admin/faq/reset", (req, res) => {
+  try {
+    const mode = req.body?.mode === "clear" ? "clear" : "factory";
+    if (mode === "clear") {
+      clearFaqAll();
+      console.log("[Admin] 知识库已清空");
+      res.json({ success: true, mode });
+    } else {
+      const r = resetFaqToFactory();
+      console.log(`[Admin] 知识库已恢复出厂: ${r.categories} 分类 / ${r.items} 条目`);
+      res.json({ success: true, mode, ...r });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "重置知识库失败" });
+  }
+});
 
 // ============= FAQ 知识库 API =============
 

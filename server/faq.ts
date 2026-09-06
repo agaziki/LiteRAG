@@ -361,6 +361,25 @@ export function deleteFaqCategory(categoryId: string): void {
   persistFaq(faq);
 }
 
+// ============= 知识库重置（数据管理） =============
+
+/** 出厂知识库快照（与仓库一同分发；重置时恢复到该内容） */
+const FACTORY_FAQ_PATH = path.join(__dirname, 'faq-data.default.json');
+
+/** 恢复出厂知识库：以仓库内置快照覆盖当前知识库（检索门槛等配置随之还原） */
+export function resetFaqToFactory(): { categories: number; items: number } {
+  const raw = JSON.parse(fs.readFileSync(FACTORY_FAQ_PATH, 'utf-8')) as FaqData;
+  persistFaq(raw);
+  return { categories: raw.categories.length, items: raw.categories.reduce((sum, c) => sum + c.items.length, 0) };
+}
+
+/** 清空知识库：保留骨架（检索门槛配置），清空全部分类与条目 */
+export function clearFaqAll(): void {
+  const faq = loadFaq();
+  faq.categories = [];
+  persistFaq(faq);
+}
+
 // ============ 文件批量导入（解析见 faq-import.ts，路线 B 时替换其解析层即可） ============
 
 export interface ImportSummary {

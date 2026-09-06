@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Card, Table, Tag, Drawer, Button, Space, Loading, Empty,
-  Tooltip, MessagePlugin, Select, Input, Textarea,
+  Tooltip, MessagePlugin, Select, Input, Textarea, Popconfirm,
 } from 'tdesign-react';
 import {
   MessageSquare, Headphones, Star, TrendingUp, Users,
@@ -133,10 +133,14 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [intentFilter, setIntentFilter] = useState<string>('');
-  // 顶部标签：对话分析 / 知识缺口 / 知识库管理 / 系统设置
-  const [tab, setTab] = useState<'analytics' | 'gaps' | 'faq' | 'settings'>('analytics');
+  // 顶部标签：对话分析 / 知识缺口 / 知识库管理 / 数据管理 / 系统设置
+  const [tab, setTab] = useState<'analytics' | 'gaps' | 'faq' | 'data' | 'settings'>('analytics');
   // 知识缺口 → 知识库管理 的预填问题
   const [prefillQuestion, setPrefillQuestion] = useState('');
+  // 数据管理
+  const [dataStats, setDataStats] = useState<Record<string, number> | null>(null);
+  const [dataLoading, setDataLoading] = useState(false);
+  const [clearDays, setClearDays] = useState('30');
 
   // 管理员登录（密码通过 .env 的 ADMIN_PASSWORD 配置）
   const [authed, setAuthed] = useState<boolean>(() => !!getAdminToken());
@@ -278,6 +282,71 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
   useEffect(() => {
     if (authed && tab === 'gaps' && gaps === null) fetchGaps();
   }, [authed, tab, gaps, fetchGaps]);
+
+  // ---- 数据管理 ----
+  const fetchDataStats = useCallback(async () => {
+    setDataLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/data-stats');
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      setDataStats(await res.json());
+    } catch {
+      MessagePlugin.error('加载数据统计失败');
+    } finally {
+      setDataLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authed && tab === 'data' && !dataStats) fetchDataStats();
+  }, [authed, tab, dataStats, fetchDataStats]);
+
+  const clearSessionsAction = useCallback(async (days?: number) => {
+    setDataLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/sessions/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ days }),
+      });
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      const data = await res.json();
+      if (data.success) {
+        MessagePlugin.success(`已清理 ${data.cleared} 个会话（关联消息/评价/转人工/用量一并删除）`);
+        setStats(null);       // 分析数据已变化
+        fetchDataStats();
+      } else {
+        MessagePlugin.error(data.error || '清理失败');
+      }
+    } catch {
+      MessagePlugin.error('网络错误');
+    } finally {
+      setDataLoading(false);
+    }
+  }, [fetchDataStats]);
+
+  const resetFaqAction = useCallback(async (mode: 'factory' | 'clear') => {
+    setDataLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/faq/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      const data = await res.json();
+      if (data.success) {
+        MessagePlugin.success(mode === 'factory' ? `知识库已恢复出厂（${data.categories} 分类 / ${data.items} 条目）` : '知识库已清空');
+        fetchDataStats();
+      } else {
+        MessagePlugin.error(data.error || '重置失败');
+      }
+    } catch {
+      MessagePlugin.error('网络错误');
+    } finally {
+      setDataLoading(false);
+    }
+  }, [fetchDataStats]);
 
   const formatTime = (iso: string) => {
     const d = new Date(iso);
@@ -437,6 +506,14 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
               <Button
                 size="small"
                 theme="primary"
+                variant={tab === 'data' ? 'base' : 'outline'}
+                onClick={() => setTab('data')}
+              >
+                数据管理
+              </Button>
+              <Button
+                size="small"
+                theme="primary"
                 variant={tab === 'settings' ? 'base' : 'outline'}
                 onClick={() => setTab('settings')}
               >
@@ -503,6 +580,71 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 </Card>
               ))
             )}
+          </div>
+        ) : tab === 'data' ? (
+          <div className="space-y-4">
+            {/* 数据规模 */}
+            <Card bordered size="small" title={<span className="font-medium">数据规模</span>}>
+              {dataStats ? (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    ['会话', dataStats.sessions],
+                    ['消息', dataStats.messages],
+                    ['评价', dataStats.ratings],
+                    ['转人工', dataStats.escalations],
+                    ['意图记录', dataStats.session_intents],
+                    ['用量记录', dataStats.token_usage],
+                    ['FAQ 分类', dataStats.faq_categories],
+                    ['FAQ 条目', dataStats.faq_items],
+                    ['文档', dataStats.docs],
+                    ['文档块', dataStats.chunks],
+                  ].map(([label, value]) => (
+                    <div key={String(label)} className="p-3 rounded-lg text-center" style={{ backgroundColor: 'var(--td-bg-color-page)' }}>
+                      <div className="text-xl font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>{Number(value).toLocaleString()}</div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>{label}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Loading size="small" />
+              )}
+            </Card>
+
+            {/* 会话清理 */}
+            <Card bordered size="small" title={<span className="font-medium" style={{ color: 'var(--td-error-color)' }}>会话清理（删除会话及其全部消息/评价/转人工/用量记录）</span>}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Input
+                  value={clearDays}
+                  onChange={(v) => setClearDays(String(v))}
+                  placeholder="清理 N 天前的会话"
+                  size="small"
+                  style={{ width: 160 }}
+                  type="number"
+                />
+                <Popconfirm content={`确定删除 ${clearDays || 'N'} 天前的全部会话？不可恢复！`} onConfirm={() => clearSessionsAction(Number(clearDays) || undefined)}>
+                  <Button size="small" variant="outline" theme="warning" loading={dataLoading}>按天数清理</Button>
+                </Popconfirm>
+                <Popconfirm content="确定清空全部会话？不可恢复！" onConfirm={() => clearSessionsAction(undefined)}>
+                  <Button size="small" variant="outline" theme="danger" loading={dataLoading}>清空全部会话</Button>
+                </Popconfirm>
+                <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>天数留空或 ≤0 视为清空全部</span>
+              </div>
+            </Card>
+
+            {/* 知识库重置 */}
+            <Card bordered size="small" title={<span className="font-medium" style={{ color: 'var(--td-error-color)' }}>知识库重置（影响全部 FAQ 条目与分类）</span>}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Popconfirm content="确定恢复出厂知识库？当前全部分类与条目将被内置快照覆盖，不可恢复！" onConfirm={() => resetFaqAction('factory')}>
+                  <Button size="small" variant="outline" theme="warning">恢复出厂知识库</Button>
+                </Popconfirm>
+                <Popconfirm content="确定清空知识库？全部分类与条目将被删除，不可恢复！" onConfirm={() => resetFaqAction('clear')}>
+                  <Button size="small" variant="outline" theme="danger">清空知识库</Button>
+                </Popconfirm>
+                <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                  出厂快照 = 仓库内置 faq-data.default.json；清空仅保留骨架（检索门槛配置不变）
+                </span>
+              </div>
+            </Card>
           </div>
         ) : tab === 'settings' ? (
           <SettingsPage agents={agents} onAdd={onAdd} onUpdate={onUpdate} onDelete={onDelete} />
