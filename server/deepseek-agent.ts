@@ -12,6 +12,7 @@
 import OpenAI from "openai";
 import { v4 as uuidv4 } from "uuid";
 import { searchKnowledge } from "./faq.js";
+import { buildSummaryPrompt } from "./history.js";
 import * as db from "./db.js";
 
 export interface AgentMessage {
@@ -34,6 +35,8 @@ export interface RunAgentOptions {
   systemPrompt: string;
   /** 历史对话（不含当前新消息），按时间正序 */
   history: AgentMessage[];
+  /** 窗口外更早历史的摘要（长会话管理），作为附加 system 上下文注入 */
+  summary?: string;
   maxTurns?: number;
   onText: (chunk: string) => void;
   onToolStart: (id: string, name: string, input: Record<string, unknown>) => void;
@@ -270,6 +273,7 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
     model,
     systemPrompt,
     history,
+    summary,
     maxTurns = 8,
     onText,
     onToolStart,
@@ -282,9 +286,10 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
   const startedAt = Date.now();
   const client = getClient();
 
-  // 构建消息序列：系统提示 + 历史 + 当前用户消息（可能含图片）
+  // 构建消息序列：系统提示 + （长会话摘要）+ 历史 + 当前用户消息（可能含图片）
   const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
     { role: "system", content: systemPrompt },
+    ...(summary ? [{ role: "system" as const, content: `【更早对话摘要】\n${summary}` }] : []),
     ...history.map(m => ({
       role: m.role === "user" ? ("user" as const) : ("assistant" as const),
       content: m.content,
@@ -388,6 +393,21 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
   } catch (error: any) {
     onError(error instanceof Error ? error : new Error(String(error)));
   }
+}
+
+/** 长会话管理：生成窗口外历史的摘要（非流式调用） */
+export async function summarizeConversation(model: string, messages: AgentMessage[]): Promise<string> {
+  const client = getClient();
+  const transcript = messages
+    .map(m => `${m.role === 'user' ? '用户' : '客服'}：${m.content}`)
+    .join('\n')
+    .slice(-12000); // 防御性截断，避免摘要本身超长
+  const res = await client.chat.completions.create({
+    model,
+    messages: buildSummaryPrompt(transcript) as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    stream: false,
+  });
+  return res.choices[0]?.message?.content?.trim() || "";
 }
 
 // ============ 可用模型 ============

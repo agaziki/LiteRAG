@@ -101,6 +101,7 @@ smart-customer-service/
 - **文件导入**：解析层在 `faq-import.ts`（CSV/XLSX/MD/JSON → 统一 `ParsedCategory[]` 中间结构），应用层在 `faq.ts` 的 `importFaq()`（merge 按问题 upsert / replace 整体覆盖）
 - **文档知识库（RAG）**：`kb-docs.ts`。抽取：docx 用 mammoth、PDF 用 pdfjs-dist 4.x（legacy 构建；勿用 pdf-parse@1.1.1，其内置 pdf.js 1.10 与 jszip 同进程冲突，会误报合法 PDF 结构无效）。分块：标题切节（保留章节路径）+ 段落聚合 ≤500 字。检索：块级关键词分（含 CJK 二元词滑窗，解决整句查询无法子串命中）+ 语义余弦，与 FAQ 条目在 `searchKnowledge()` 融合排序（FAQ +4 精选加权）。向量存 `kb_chunks.vector`（JSON 文本），`kb_meta` 记录模型配置，模型变更自动全部重建；向量同步失败自动回退关键词。数据库路径可用 `DB_PATH` 重定向
 - **图片问答（视觉模型）**：前端 ChatInput 选图（≤4 张、单张 ≤5MB，data URL）→ `/api/chat` 的 `images` 字段 → `validateImages()` 校验 → `buildUserContent()` 构建 OpenAI 多模态消息体（text + image_url 数组）→ 仅 `deepseek-v4-flash-vision-exp` 等视觉模型可用。图片持久化在 `messages.images`（JSON 数组）；**多轮历史中的图片不重复上传给模型**（成本考虑），以 `[该消息附带 N 张图片]` 文字备注占位，仅当前消息的图片进入模型。embedding 服务连通性可用 `npm run embed:check` 自检（默认推荐硅基流动 BGE-M3）
+- **长对话历史管理**：`history.ts` 的 `partitionHistory()` 按 `HISTORY_WINDOW`（默认 30）切分；窗口外消息由 `summarizeConversation()`（deepseek-agent.ts，非流式调用）压缩为 ≤300 字摘要，缓存在 `sessions.summary/summary_upto`（消息增量超阈值才重生成），以附加 system 消息注入；生成失败自动降级纯窗口模式。CI：`.github/workflows/ci.yml`（push/PR 自动 tsc + build + npm test）
 
 ### 5. 数据库（server/db.ts）
 

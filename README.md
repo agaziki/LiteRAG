@@ -1,5 +1,7 @@
 # LiteRAG · 智能客服 RAG Agent
 
+[![CI](https://github.com/agaziki/LiteRAG/actions/workflows/ci.yml/badge.svg)](https://github.com/agaziki/LiteRAG/actions/workflows/ci.yml)
+
 基于 **DeepSeek API**（OpenAI 兼容接口）构建的开源智能客服应用：FAQ 问答库 + 文档知识库（RAG）双引擎检索，支持多轮对话、图片问答（视觉模型）、意图识别、自动转人工、满意度评价与运营后台。
 
 > GitHub：https://github.com/agaziki/LiteRAG · License: MIT
@@ -46,6 +48,14 @@
 发送后图片以缩略图显示在消息气泡上方，点击可放大查看。
 
 技术说明：图片以 data URL 随消息持久化到 SQLite；发送给视觉模型时构建 OpenAI 多模态消息体（text + image_url）；多轮对话中历史图片不重复上传（以文字备注占位），仅当前消息的图片进入模型。
+
+## 长对话历史管理
+
+超出滑动窗口（默认最近 30 条消息，`HISTORY_WINDOW` 可调）的更早历史，会由模型自动压缩为 ≤300 字的会话摘要，以附加 system 上下文注入——模型始终掌握全局语境，请求体不会随会话增长无限膨胀。
+
+- 摘要按会话缓存（`sessions.summary`），窗口外新增消息累计超过阈值才重新生成
+- 摘要生成失败时自动降级为纯窗口模式，不影响对话
+- 图片等大体积内容不进入摘要，仅以文字备注占位
 
 ## 快速开始
 
@@ -202,8 +212,9 @@ LiteRAG/
 ## 测试
 
 ```bash
-npm test         # 四套验证脚本：检索/门槛/融合、文件导入、文档 RAG、图片管线（共 82 项断言）
+npm test              # 五套验证脚本：检索/门槛/融合、文件导入、文档 RAG、图片管线、历史管理（共 90 项断言）
 npm run embed:check   # 验证 embedding 服务连通性（需先配置 EMBEDDING_* 环境变量）
+npm run e2e:check     # 真实 Key 端到端回归：对话/FAQ 工具/视觉识图/边界/转人工（需服务已启动且配置 DEEPSEEK_API_KEY）
 ```
 
 ## 安全与隐私（开源说明）

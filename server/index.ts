@@ -16,8 +16,9 @@ import { parseImportFile, buildCsvTemplate } from "./faq-import.js";
 import { ingestDoc, listDocs, deleteDoc } from "./kb-docs.js";
 import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
+import { partitionHistory } from "./history.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
-import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages } from "./deepseek-agent.js";
+import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages, summarizeConversation } from "./deepseek-agent.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -302,7 +303,7 @@ app.post("/api/chat", async (req, res) => {
   // 历史中的图片不重复发送给模型（成本考虑），以文字备注占位；
   // 仅当前消息的图片会进入多模态消息体。
   const existingMessages = db.getMessagesBySession(session.id);
-  const history = existingMessages.map(m => {
+  let history = existingMessages.map(m => {
     let content = m.content;
     if (m.role === 'user' && m.images) {
       try {
@@ -312,6 +313,27 @@ app.post("/api/chat", async (req, res) => {
     }
     return { role: m.role, content };
   });
+
+  // 长会话管理：超出滑动窗口的历史以 LLM 摘要替代（摘要按会话缓存，增量超阈值才重新生成）
+  const historyWindow = Math.max(6, parseInt(process.env.HISTORY_WINDOW || "30", 10) || 30);
+  let sessionSummary = "";
+  if (history.length > historyWindow) {
+    const { older, recent } = partitionHistory(history, historyWindow);
+    history = recent;
+    const summarizedCount = existingMessages.length - recent.length;
+    const cached = session.summary && (session.summary_upto ?? 0) >= summarizedCount ? session.summary : "";
+    if (cached) {
+      sessionSummary = cached;
+    } else {
+      try {
+        console.log(`[Chat] 历史超出窗口（${older.length} 条），生成会话摘要…`);
+        sessionSummary = await summarizeConversation(selectedModel, older);
+        if (sessionSummary) db.setSessionSummary(session.id, sessionSummary, summarizedCount);
+      } catch (e: any) {
+        console.error(`[Chat] 摘要生成失败（降级为无摘要）:`, e?.message);
+      }
+    }
+  }
 
   // 创建消息 ID
   const userMessageId = uuidv4();
@@ -384,6 +406,7 @@ app.post("/api/chat", async (req, res) => {
       message,
       images: validatedImages.length > 0 ? validatedImages : undefined,
       model: selectedModel,
+      summary: sessionSummary || undefined,
       systemPrompt: finalSystemPrompt,
       history,
       signal: ac.signal,

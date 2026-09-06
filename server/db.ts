@@ -136,6 +136,13 @@ try {
     db.exec("ALTER TABLE escalations ADD COLUMN note TEXT");
     console.log("[DB] Added contact/note columns to escalations table");
   }
+  // 长会话管理：历史摘要缓存
+  const hasSummary = sessionsInfo.some(col => col.name === 'summary');
+  if (!hasSummary) {
+    db.exec("ALTER TABLE sessions ADD COLUMN summary TEXT");
+    db.exec("ALTER TABLE sessions ADD COLUMN summary_upto INTEGER");
+    console.log("[DB] Added summary/summary_upto columns to sessions table");
+  }
 } catch (e) {
   // 忽略错误（列可能已存在）
 }
@@ -148,6 +155,10 @@ export interface DbSession {
   sdk_session_id: string | null;
   created_at: string;
   updated_at: string;
+  /** 长会话管理：窗口外历史的摘要缓存 */
+  summary?: string | null;
+  /** 摘要已覆盖的消息条数 */
+  summary_upto?: number | null;
 }
 
 export interface DbMessage {
@@ -220,6 +231,12 @@ export function deleteSession(id: string): boolean {
   const stmt = db.prepare('DELETE FROM sessions WHERE id = ?');
   const result = stmt.run(id);
   return result.changes > 0;
+}
+
+/** 长会话管理：保存窗口外历史的摘要及已覆盖的消息条数 */
+export function setSessionSummary(sessionId: string, summary: string, upto: number): boolean {
+  const stmt = db.prepare('UPDATE sessions SET summary = ?, summary_upto = ? WHERE id = ?');
+  return stmt.run(summary, upto, sessionId).changes > 0;
 }
 
 // ============= 消息操作 =============
