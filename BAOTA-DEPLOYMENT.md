@@ -53,7 +53,7 @@ cp .env.example .env
 vi .env   # 或用宝塔文件管理器编辑
 ```
 
-必须填写 `DEEPSEEK_API_KEY`；如需语义检索，推荐配置硅基流动 BGE-M3（示例见 `.env.example`，配置后可用 `npm run embed:check` 自检）。**`.env` 已被 gitignore，升级代码不会覆盖。**
+必须填写 `DEEPSEEK_API_KEY`；**公网部署务必同时设置 `ADMIN_PASSWORD`**（管理后台与知识库管理接口的访问密码，未配置时管理后台整体禁用）；如需语义检索，推荐配置硅基流动 BGE-M3（示例见 `.env.example`，配置后可用 `npm run embed:check` 自检）。**`.env` 已被 gitignore，升级代码不会覆盖。**
 
 ## 5. 启动项目（两种方式二选一）
 
