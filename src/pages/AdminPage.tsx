@@ -113,6 +113,12 @@ const INTENT_COLORS: Record<string, string> = {
 };
 
 // ============ 知识缺口 ============
+interface DashboardData {
+  latency: { avg: number; p50: number; p95: number; count: number };
+  knowledge: { faq_hits: number; doc_hits: number; miss: number; hit_rate: number };
+  dailyActive: Array<{ date: string; sessions: number }>;
+}
+
 interface KnowledgeGap {
   id: string;
   title: string;
@@ -265,6 +271,8 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
     }
   }, [detail, replyText, openDetail]);
 
+  // 看板增强数据
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   // 知识缺口清单
   const [gaps, setGaps] = useState<KnowledgeGap[] | null>(null);
   const [gapsLoading, setGapsLoading] = useState(false);
@@ -286,6 +294,18 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
   useEffect(() => {
     if (authed && tab === 'gaps' && gaps === null) fetchGaps();
   }, [authed, tab, gaps, fetchGaps]);
+
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const res = await adminFetch('/api/admin/dashboard');
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      setDashboard(await res.json());
+    } catch { /* 静默 */ }
+  }, []);
+
+  useEffect(() => {
+    if (authed && tab === 'analytics' && !dashboard) fetchDashboard();
+  }, [authed, tab, dashboard, fetchDashboard]);
 
   // ---- 数据管理 ----
   const fetchDataStats = useCallback(async () => {
@@ -706,6 +726,44 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 sub={`输入 ¥${stats.overview.price?.input_per_1m ?? 0}/百万 · 输出 ¥${stats.overview.price?.output_per_1m ?? 0}/百万`}
               />
             </div>
+
+            {/* 服务质量看板 */}
+            {dashboard && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                <Card title="响应时延（最近 500 条回复）" bordered>
+                  <div className="grid grid-cols-4 gap-3 py-2 text-center">
+                    {[['平均', dashboard.latency.avg], ['P50', dashboard.latency.p50], ['P95', dashboard.latency.p95], ['样本', dashboard.latency.count]].map(([label, val]) => (
+                      <div key={String(label)}>
+                        <div className="text-lg font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
+                          {label === '样本' ? Number(val).toLocaleString() : `${(Number(val) / 1000).toFixed(1)}s`}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+                <Card title="知识命中（最近 500 轮检索）" bordered>
+                  <div className="grid grid-cols-4 gap-3 py-2 text-center">
+                    <div>
+                      <div className="text-lg font-semibold" style={{ color: 'var(--td-success-color)' }}>{dashboard.knowledge.hit_rate}%</div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>命中率</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold" style={{ color: 'var(--td-brand-color)' }}>{dashboard.knowledge.faq_hits}</div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>FAQ 命中</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold" style={{ color: '#7b61ff' }}>{dashboard.knowledge.doc_hits}</div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>文档命中</div>
+                    </div>
+                    <div>
+                      <div className="text-lg font-semibold" style={{ color: 'var(--td-error-color)' }}>{dashboard.knowledge.miss}</div>
+                      <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>未命中</div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            )}
 
             {/* 分布图 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">

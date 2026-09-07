@@ -158,6 +158,11 @@ try {
     db.exec("ALTER TABLE sessions ADD COLUMN summary_upto INTEGER");
     console.log("[DB] Added summary/summary_upto columns to sessions table");
   }
+  // v2.0 看板：助手消息响应时延
+  if (!messagesInfo.some(col => col.name === 'latency_ms')) {
+    db.exec("ALTER TABLE messages ADD COLUMN latency_ms INTEGER");
+    console.log("[DB] Added latency_ms column to messages table");
+  }
   // v2.0 多租户：会话归属访客
   if (!sessionsInfo.some(col => col.name === 'visitor_id')) {
     db.exec("ALTER TABLE sessions ADD COLUMN visitor_id TEXT");
@@ -194,6 +199,8 @@ export interface DbMessage {
   tool_calls: string | null;
   /** 用户消息附带的图片（data URL JSON 数组），仅视觉模型场景 */
   images: string | null;
+  /** 助手消息响应时延（毫秒） */
+  latency_ms?: number | null;
 }
 
 // ============= 会话操作 =============
@@ -335,6 +342,67 @@ export interface KnowledgeGap {
 }
 
 /** 知识缺口清单：命中任一信号（other 意图 / 低星评价 / 转人工）的会话 */
+export interface DashboardStats {
+  latency: { avg: number; p50: number; p95: number; count: number };
+  knowledge: { faq_hits: number; doc_hits: number; miss: number; hit_rate: number };
+  dailyActive: Array<{ date: string; sessions: number }>;
+}
+
+/** 看板增强：时延分布 / 知识命中率 / 日活趋势（最近 14 天） */
+export function getDashboardStats(): DashboardStats {
+  // 时延：取最近 500 条助手消息的 latency_ms
+  const latencies = (db.prepare(`
+    SELECT latency_ms FROM messages
+    WHERE role = 'assistant' AND latency_ms IS NOT NULL
+    ORDER BY created_at DESC LIMIT 500
+  `).all() as Array<{ latency_ms: number }>).map(r => r.latency_ms).sort((a, b) => a - b);
+  const pick = (p: number) => (latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * p))] : 0);
+  const latency = {
+    avg: latencies.length ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : 0,
+    p50: pick(0.5),
+    p95: pick(0.95),
+    count: latencies.length,
+  };
+
+  // 知识命中率：所有 search_faq 结果里 count>0 的占比（从 tool_calls 提取）
+  const rows = db.prepare(`
+    SELECT tool_calls FROM messages
+    WHERE role = 'assistant' AND tool_calls IS NOT NULL
+    ORDER BY created_at DESC LIMIT 500
+  `).all() as Array<{ tool_calls: string }>;
+  let faqHits = 0, docHits = 0, miss = 0;
+  for (const row of rows) {
+    try {
+      const calls = JSON.parse(row.tool_calls) as Array<{ name: string; result?: string }>;
+      for (const call of calls) {
+        if (call.name !== 'search_faq' || !call.result) continue;
+        const parsed = JSON.parse(call.result);
+        const results = Array.isArray(parsed.results) ? parsed.results : [];
+        const hasFaq = results.some((r: any) => r.type !== 'doc');
+        const hasDoc = results.some((r: any) => r.type === 'doc');
+        if (hasFaq) faqHits++;
+        if (hasDoc) docHits++;
+        if (results.length === 0) miss++;
+      }
+    } catch { /* 忽略损坏数据 */ }
+  }
+  const totalSearches = faqHits + docHits + miss;
+  const knowledge = {
+    faq_hits: faqHits,
+    doc_hits: docHits,
+    miss,
+    hit_rate: totalSearches > 0 ? Math.round(((faqHits + docHits) / totalSearches) * 1000) / 10 : 0,
+  };
+
+  // 日活趋势：最近 14 天每日新增会话
+  const dailyActive = db.prepare(`
+    SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS sessions
+    FROM sessions GROUP BY date ORDER BY date DESC LIMIT 14
+  `).all() as DashboardStats['dailyActive'];
+
+  return { latency, knowledge, dailyActive };
+}
+
 export function getKnowledgeGaps(): KnowledgeGap[] {
   return db.prepare(`
     SELECT s.id, s.title, s.updated_at,
@@ -452,8 +520,8 @@ export function countHumanReplies(sessionId: string): number {
 // 创建消息
 export function createMessage(message: DbMessage): DbMessage {
   const stmt = db.prepare(`
-    INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls, images)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls, images, latency_ms)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     message.id,
@@ -463,7 +531,8 @@ export function createMessage(message: DbMessage): DbMessage {
     message.model,
     message.created_at,
     message.tool_calls,
-    message.images
+    message.images,
+    message.latency_ms ?? null
   );
   
   // 更新会话的 updated_at

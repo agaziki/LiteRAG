@@ -23,6 +23,10 @@
 - 🧭 **知识缺口报表** - 聚合其他意图/低星评价/转人工会话，生成知识库盲区清单并一键预填补充
 - 🎯 **Rerank 精排（可选）** - 两阶段检索：粗筛 top-20 后精排重排序，进一步提命中率
 - 📎 **引用溯源** - 回答附「参考来源」折叠面板，展示命中的 FAQ 条目与文档片段
+- 🧑‍💼 **多租户** - 匿名访客身份自动隔离会话，管理员全局视角
+- ⚡ **实时人工** - WebSocket 坐席通道：转人工实时推送、实时回复
+- 📊 **运营看板** - 响应时延分布、知识命中率统计
+- 🧩 **网页挂件** - 一段 `<script>` 接入任意站点（`/embed.js`）
 - 🎨 **主题切换** - 深色 / 浅色
 
 ## 技术栈
@@ -239,6 +243,13 @@ npm start       # 单端口 3000：API + 前端静态托管（SPA）
 ```
 
 完整部署流程（PM2 进程守护、nginx 反向代理 SSE 配置、数据备份、升级与故障排查）见 [DEPLOYMENT.md](./DEPLOYMENT.md)；**宝塔面板部署**见 [BAOTA-DEPLOYMENT.md](./BAOTA-DEPLOYMENT.md)；二次开发指南见 [DEVELOPMENT.md](./DEVELOPMENT.md)；版本规划见 [ROADMAP.md](./ROADMAP.md)；更新日志见 [CHANGELOG.md](./CHANGELOG.md)。
+
+**网页挂件接入**：在任意站点 `</body>` 前加入：
+
+```html
+<script>window.LiteRAGConfig = { server: "https://your-literag-domain.com" };</script>
+<script src="https://your-literag-domain.com/embed.js"></script>
+```
 
 ## License
 

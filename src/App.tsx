@@ -20,6 +20,8 @@ function App() {
       <Route path="/chat/:sessionId" element={<AppContent />} />
       {/* 管理后台仅通过 /admin 直链访问（密码门控），普通用户界面无入口 */}
       <Route path="/admin" element={<AppContent />} />
+      {/* 网页挂件 iframe 页面（embed.js 引用，侧边栏隐藏的精简对话视图） */}
+      <Route path="/widget" element={<AppContent />} />
       <Route path="/settings" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -31,6 +33,7 @@ function AppContent() {
   const { sessionId: urlSessionId } = useParams<{ sessionId: string }>();
   const location = useLocation();
   const isAdminPage = location.pathname === '/admin';
+  const isWidgetPage = location.pathname === '/widget';
 
   // Hooks
   const { theme, toggleTheme } = useTheme();
@@ -127,8 +130,8 @@ function AppContent() {
       className="flex h-screen w-screen"
       style={{ backgroundColor: 'var(--td-bg-color-page)' }}
     >
-      {/* 侧边栏（管理后台下隐藏，普通用户界面无设置/后台入口） */}
-      {!isAdminPage && (
+      {/* 侧边栏（管理后台/挂件下隐藏） */}
+      {!isAdminPage && !isWidgetPage && (
         <Sidebar
           sessions={sessions}
           currentSessionId={currentSessionId}
@@ -147,7 +150,7 @@ function AppContent() {
         style={{ backgroundColor: 'var(--td-bg-color-page)' }}
       >
         <Header
-          isAdminPage={isAdminPage}
+          isAdminPage={isAdminPage || isWidgetPage}
           sidebarOpen={sidebarOpen}
           theme={theme}
           currentSession={currentSession}

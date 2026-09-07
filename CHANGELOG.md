@@ -3,6 +3,20 @@
 本项目的所有重要变更记录在案。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [2.0.0] — 多租户与实时人工
+
+### 新增
+- 访客身份与会话隔离：匿名 visitorId（httpOnly cookie，1 年）自动签发；会话全链路归属校验（列表/详情/删除/续聊/评价/转人工），越权 403；管理员不受限
+- 实时人工坐席通道：WebSocket `/ws/agent`（ADMIN token 鉴权）——转人工 pending 实时推送、坐席实时回复（落库 human-agent 消息）、接入/解决操作；用户端零破坏兼容（轮询+特殊渲染）
+- 数据看板增强：响应时延分布（平均/P50/P95）、知识命中率（FAQ/文档/未命中占比）
+- 网页挂件：`/embed.js` 一段代码接入任意站点（悬浮按钮 + `/widget` iframe 对话窗）
+
+### 变更
+- HTTP 服务显式化（http.createServer）以承载 WebSocket 升级
+- sessions 表新增 `visitor_id` 列（自动迁移）、messages 表新增 `latency_ms` 列（看板用）
+
+[2.0.0]: https://github.com/agaziki/LiteRAG/compare/v1.4.1...v2.0.0
+
 ## [1.4.1] — 数据管理 + 发布工程
 
 ### 新增

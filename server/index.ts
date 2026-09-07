@@ -428,6 +428,7 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   // 累积完整回复和工具调用
   let fullResponse = "";
   let lastErrorMessage = "";
+  let lastLatencyMs: number | null = null;
   const toolCalls: Array<{
     id: string;
     name: string;
@@ -491,6 +492,7 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
         })}\n\n`);
       },
       onDone: ({ duration, turns, usage }) => {
+        lastLatencyMs = duration;
         console.log(`[Chat] 完成: ${turns} 轮, ${duration}ms, tokens=${usage.total_tokens}`);
         try {
           db.createTokenUsage({
@@ -525,6 +527,7 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       created_at: new Date().toISOString(),
       tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null,
       images: null,
+      latency_ms: lastLatencyMs,
     });
 
     // 更新会话标题（如果是第一条消息）
@@ -1148,6 +1151,15 @@ app.get("/api/admin/usage", (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取用量失败" });
+  }
+});
+
+// 看板增强：时延分布 / 知识命中率 / 日活趋势
+app.get("/api/admin/dashboard", (req, res) => {
+  try {
+    res.json(db.getDashboardStats());
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "获取看板数据失败" });
   }
 });
 
