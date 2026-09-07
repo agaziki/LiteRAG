@@ -3,7 +3,19 @@
 本项目的所有重要变更记录在案。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.1.0] — Backlog 清算
+## [2.2.0] — 部署测试反馈第二轮
+
+### 新增
+- 转人工接管模式：会话存在排队中/已接入的转人工工单时，用户消息只转达人工（落库 + 坐席实时通知），**不再调用大模型**；人工「标记解决」后自动恢复 AI 应答
+- 账号体系前端呈现：顶栏账号按钮（登录/注册弹窗、已登录显示用户名与退出）；用户侧请求（会话/消息/评价/转人工）自动携带登录凭证，匿名会话登录后跨设备同步
+- 渠道接入 Demo：`examples/channel-gateway-demo.js` 零依赖最小网关演示（收消息 → LiteRAG → 打印回复）
+
+### 文档
+- `.env.example` 补充 `CHANNEL_SECRET`；`docs/CHANNELS.md` 增加 Demo 运行说明
+
+[2.2.0]: https://github.com/agaziki/LiteRAG/compare/v2.1.0...v2.2.0
+
+
 
 ### 新增
 - 历史图片回传：`VISION_HISTORY_IMAGES=true` + `VISION_HISTORY_IMAGES_COUNT`（默认 2）——视觉模型支持「再看刚才那张图」

@@ -65,6 +65,14 @@ export function broadcastPending(): void {
   }
 }
 
+/** 转人工模式下用户消息到达：通知坐席刷新会话视图 */
+export function broadcastUserMessage(sessionId: string, content: string): void {
+  const payload = JSON.stringify({ type: "user_message", sessionId, content });
+  for (const conn of agents) {
+    if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(payload);
+  }
+}
+
 function handleAgentMessage(conn: AgentConn, raw: string): void {
   let msg: any;
   try {

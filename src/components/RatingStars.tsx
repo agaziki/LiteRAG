@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Button, Textarea, MessagePlugin } from 'tdesign-react';
 import { Star } from 'lucide-react';
+import { authedFetch } from '../utils/userAuth';
 
 interface RatingStarsProps {
   sessionId: string;
@@ -31,7 +32,7 @@ export function RatingStars({ sessionId, messageId, initialRating, initialCommen
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/ratings/${sessionId}`);
+        const res = await authedFetch(`/api/ratings/${sessionId}`);
         const data = await res.json();
         if (cancelled || !Array.isArray(data.ratings)) return;
         const mine = messageId
@@ -51,7 +52,7 @@ export function RatingStars({ sessionId, messageId, initialRating, initialCommen
     if (submitting) return;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/ratings', {
+      const res = await authedFetch('/api/ratings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, messageId, rating, comment: comment || undefined }),

@@ -21,7 +21,7 @@ import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
 import { resetFaqToFactory, clearFaqAll } from "./faq.js";
-import { attachRealtime, setTokenValidator, broadcastPending, handleRealtimeUpgrade } from "./realtime.js";
+import { attachRealtime, setTokenValidator, broadcastPending, broadcastUserMessage, handleRealtimeUpgrade } from "./realtime.js";
 import { attachUserChannel, notifyHumanReply, handleUserUpgrade } from "./user-channel.js";
 import { channelRouter } from "./channels.js";
 import { moderateImage } from "./moderation.js";
@@ -451,6 +451,24 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
     assistantMessageId,
     model: selectedModel,
   })}\n\n`);
+
+  // ===== 转人工接管模式 =====
+  // 会话存在排队中/已接入的转人工工单时，用户消息只转达人工（落库 + 通知坐席），
+  // 不再调用大模型；人工「标记解决」后自动恢复 AI 应答。
+  const activeEscalation = db.getEscalationsBySession(session.id)
+    .filter(e => e.status === 'pending' || e.status === 'accepted')
+    .pop();
+  if (activeEscalation) {
+    broadcastUserMessage(session.id, message);
+    const notice = activeEscalation.status === 'accepted'
+      ? '人工客服已接入，请直接输入您的问题，客服将在这里实时回复您。'
+      : '已为您转接人工客服，您的消息已转达。人工客服（每日 9:00-22:00）将在这里直接回复您，请耐心等待。';
+    console.log(`[Chat] 转人工接管模式（${activeEscalation.status}），消息已转达人工`);
+    res.write(`data: ${JSON.stringify({ type: "text", content: notice })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "done", duration: 0, turns: 0 })}\n\n`);
+    res.end();
+    return;
+  }
 
   // 累积完整回复和工具调用
   let fullResponse = "";

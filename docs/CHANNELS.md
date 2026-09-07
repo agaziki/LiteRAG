@@ -96,6 +96,16 @@ res.send(`<xml><ToUserName><![CDATA[${openid}]]></ToUserName>
 
 `from` 填公众号 `openid`。**注意**：微信 5 秒超时会重试——若 Agent 响应可能超时，网关应先立即回空串（微信会停止重试），再改走「客服消息接口」主动下发回复（要求用户 48 小时内互动过）。
 
+## 三·五、可运行 Demo
+
+`examples/channel-gateway-demo.js` 是零依赖的最小网关演示（模拟用户发消息 → LiteRAG → 打印回复）：
+
+```bash
+CHANNEL_SECRET=your-shared-secret LITERAG_URL=http://localhost:3000 node examples/channel-gateway-demo.js "退款多久能到账"
+```
+
+真实渠道按「接收消息 → 调 LiteRAG → 下发 reply」替换收发两段即可。
+
 ## 四、其他渠道（钉钉 / 飞书 / Telegram 等）
 
 同一模式：网关适配各渠道协议后调用 `/api/channels/<name>/message`，`channel` 名自定义。不同渠道用户的会话按 `channel:名:用户标识` 隔离。

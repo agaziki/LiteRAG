@@ -12,6 +12,8 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatPage } from './pages/ChatPage';
 import { AdminPage } from './pages/AdminPage';
+import { UserAuthDialog } from './components/UserAuthDialog';
+import { authedFetch, getUserToken, isUserLoggedIn, clearUserToken } from './utils/userAuth';
 
 function App() {
   return (
@@ -125,6 +127,27 @@ function AppContent() {
   // Sidebar 状态
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // 账号（跨设备同步会话）
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [loggedInUsername, setLoggedInUsername] = useState<string | null>(() => (isUserLoggedIn() ? '…' : null));
+
+  // 启动时校验 token 并取用户名
+  useEffect(() => {
+    if (!getUserToken()) { setLoggedInUsername(null); return; }
+    authedFetch('/api/auth/me')
+      .then(r => r.json())
+      .then(j => { setLoggedInUsername(j.loggedIn ? j.username : (clearUserToken(), null)); })
+      .catch(() => {});
+  }, []);
+
+  const refreshSessionsAfterAuth = useCallback(() => {
+    authedFetch('/api/auth/me')
+      .then(r => r.json())
+      .then(j => setLoggedInUsername(j.loggedIn ? j.username : null))
+      .catch(() => {});
+    fetchSessions(); // 身份变化后按新身份重新拉取会话列表
+  }, [fetchSessions]);
+
   return (
     <div
       className="flex h-screen w-screen"
@@ -159,6 +182,15 @@ function AppContent() {
           onToggleSidebar={() => setSidebarOpen(!sidebarOpen)}
           onToggleTheme={toggleTheme}
           onRefreshModels={fetchModels}
+          loggedInUsername={loggedInUsername}
+          onOpenAccount={() => setAccountOpen(true)}
+        />
+
+        <UserAuthDialog
+          visible={accountOpen}
+          onClose={() => setAccountOpen(false)}
+          onChanged={refreshSessionsAfterAuth}
+          loggedInUsername={loggedInUsername}
         />
 
         {isAdminPage ? (

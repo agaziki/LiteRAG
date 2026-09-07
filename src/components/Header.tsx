@@ -5,6 +5,7 @@ import {
   MoonIcon,
   MenuFoldIcon,
   MenuUnfoldIcon,
+  UserIcon,
 } from 'tdesign-icons-react';
 import { Bot } from 'lucide-react';
 import { APP_CONFIG } from '../config';
@@ -21,6 +22,9 @@ interface HeaderProps {
   onToggleSidebar: () => void;
   onToggleTheme: () => void;
   onRefreshModels: () => void;
+  /** 账号：已登录用户名 / 打开账号弹窗 */
+  loggedInUsername: string | null;
+  onOpenAccount: () => void;
 }
 
 export function Header({
@@ -33,6 +37,8 @@ export function Header({
   onToggleSidebar,
   onToggleTheme,
   onRefreshModels,
+  loggedInUsername,
+  onOpenAccount,
 }: HeaderProps) {
   const formatModelName = (modelId: string) => {
     const model = models.find(m => m.modelId === modelId);
@@ -99,6 +105,21 @@ export function Header({
               icon={<RefreshIcon />}
               onClick={onRefreshModels}
             />
+          </Tooltip>
+        )}
+        {!hideAuxInfo && (
+          <Tooltip content={loggedInUsername ? `账号：${loggedInUsername}` : '登录 / 注册（跨设备同步会话）'}>
+            <Button
+              variant={loggedInUsername ? 'outline' : 'text'}
+              theme={loggedInUsername ? 'primary' : 'default'}
+              shape="circle"
+              icon={<UserIcon />}
+              onClick={onOpenAccount}
+            >
+              {loggedInUsername ? (
+                <span className="text-xs ml-1 max-w-[80px] truncate">{loggedInUsername}</span>
+              ) : null}
+            </Button>
           </Tooltip>
         )}
       </div>

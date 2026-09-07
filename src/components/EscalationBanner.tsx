@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button, Input, Textarea, MessagePlugin } from 'tdesign-react';
 import { UserCheck, Clock, CheckCircle2, AlertCircle, Send } from 'lucide-react';
+import { authedFetch } from '../utils/userAuth';
 
 interface EscalationInfo {
   id: string;
@@ -40,7 +41,7 @@ export function EscalationBanner({ sessionId, refreshKey, onUpdate }: Escalation
       if (!sessionId) return;
       try {
         setLoading(true);
-        const res = await fetch(`/api/escalate/${sessionId}`);
+        const res = await authedFetch(`/api/escalate/${sessionId}`);
         const data = await res.json();
         if (cancelled) return;
         if (data.escalations) setEscalations(data.escalations);
@@ -107,7 +108,7 @@ export function EscalationBanner({ sessionId, refreshKey, onUpdate }: Escalation
     }
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/escalate/note/${latest.id}`, {
+      const res = await authedFetch(`/api/escalate/note/${latest.id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contact: contact.trim(), note: note.trim() }),

@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react';
+import { authedFetch } from '../utils/userAuth';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, ToolCall, Session, CustomAgent, ContentBlock } from '../types';
 
@@ -259,7 +260,7 @@ export function useChat(options: UseChatOptions) {
     abortRef.current = controller;
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await authedFetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
