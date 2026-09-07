@@ -19,6 +19,7 @@ import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
 import { resetFaqToFactory, clearFaqAll } from "./faq.js";
 import { moderateImage } from "./moderation.js";
+import { ensureVisitor, setAdminCheck } from "./visitor.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages, summarizeConversation } from "./deepseek-agent.js";
 
@@ -77,6 +78,9 @@ function fixMojibake(name: string): string {
 // Middleware
 // JSON 请求体上限 50MB：容纳图片问答（最多 4 张 × 5MB 图片的 base64，约 27MB）
 app.use(express.json({ limit: "50mb" }));
+
+// 访客身份签发：必须先于所有 /api 路由注册
+app.use(ensureVisitor);
 
 const defaultModel = DEFAULT_MODEL;
 
@@ -184,7 +188,7 @@ app.get("/api/models", (req, res) => {
 // 获取所有会话（包含消息数量）
 app.get("/api/sessions", (req, res) => {
   try {
-    const sessions = db.getAllSessions();
+    const sessions = isAdminRequest(req) ? db.getAllSessions() : db.getSessionsByVisitor(getVisitor(req));
     // 一条 GROUP BY 取全部计数：绝不逐会话全量读消息（images 含 base64，会阻塞事件循环）
     const counts = db.getMessageCounts();
     const sessionsWithMessages = sessions.map(session => ({
@@ -202,11 +206,8 @@ app.get("/api/sessions", (req, res) => {
 app.get("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
-    const session = db.getSession(sessionId);
-
-    if (!session) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
+    const session = assertSessionAccess(req, res, sessionId);
+    if (!session) return;
 
     const messages = db.getMessagesBySession(sessionId);
 
@@ -236,7 +237,8 @@ app.post("/api/sessions", (req, res) => {
       model,
       sdk_session_id: null,
       created_at: now,
-      updated_at: now
+      updated_at: now,
+      visitor_id: getVisitor(req),
     });
 
     res.json({ session });
@@ -251,6 +253,8 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
     const { title, model } = req.body;
+
+    if (!assertSessionAccess(req, res, sessionId)) return;
 
     const success = db.updateSession(sessionId, { title, model });
 
@@ -269,6 +273,9 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
 app.delete("/api/sessions/:sessionId", (req, res) => {
   try {
     const { sessionId } = req.params;
+
+    if (!assertSessionAccess(req, res, sessionId)) return;
+
     const success = db.deleteSession(sessionId);
 
     if (!success) {
@@ -329,8 +336,13 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       sdk_session_id: null,
       created_at: now,
       updated_at: now,
+      visitor_id: getVisitor(req),
     });
   } else {
+    // 归属校验：他人会话不可续聊（管理员除外）
+    if (!isAdminRequest(req) && session.visitor_id && session.visitor_id !== getVisitor(req)) {
+      return res.status(403).json({ error: "无权访问该会话" });
+    }
     console.log(`[Chat] 使用现有会话: ${session.id}`);
   }
 
@@ -646,6 +658,27 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 app.use("/api/admin", requireAdmin);
 app.use("/api/faq", requireAdmin);
 
+// ============= 访客身份（v2.0 多租户地基） =============
+// 匿名访客自动签发 visitorId（httpOnly cookie），会话按访客隔离；
+// 管理员登录后不受隔离限制（可查看全部会话）。
+// 注意：ensureVisitor 在文件顶部 express.json 之后挂载（必须先于所有 /api 路由）。
+setAdminCheck(isAdminRequest);
+const getVisitor = (req: express.Request): string => (req as any).visitorId as string;
+
+/** 会话归属校验：管理员放行；非本访客的会话 403/404 */
+function assertSessionAccess(req: express.Request, res: express.Response, sessionId: string): db.DbSession | null {
+  const session = db.getSession(sessionId);
+  if (!session) {
+    res.status(404).json({ error: "会话不存在" });
+    return null;
+  }
+  if (!isAdminRequest(req) && session.visitor_id && session.visitor_id !== getVisitor(req)) {
+    res.status(403).json({ error: "无权访问该会话" });
+    return null;
+  }
+  return session;
+}
+
 // ============= 数据管理（管理后台） =============
 
 // 数据规模统计
@@ -915,10 +948,7 @@ app.post("/api/ratings", (req, res) => {
     if (!sessionId || !rating || rating < 1 || rating > 5) {
       return res.status(400).json({ error: "参数错误：需要 sessionId 和 1-5 的 rating" });
     }
-    const session = db.getSession(sessionId);
-    if (!session) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
+    if (!assertSessionAccess(req, res, sessionId)) return;
     const record = db.upsertRating({
       id: uuidv4(),
       session_id: sessionId,
@@ -953,10 +983,7 @@ app.post("/api/escalate", (req, res) => {
     if (!sessionId || !reason) {
       return res.status(400).json({ error: "参数错误：需要 sessionId 和 reason" });
     }
-    const session = db.getSession(sessionId);
-    if (!session) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
+    if (!assertSessionAccess(req, res, sessionId)) return;
     const record = db.createEscalation({
       id: uuidv4(),
       session_id: sessionId,
@@ -975,6 +1002,7 @@ app.post("/api/escalate", (req, res) => {
 // 获取某会话的转人工状态（含人工回复数量，供前端检测新回复）
 app.get("/api/escalate/:sessionId", (req, res) => {
   try {
+    if (!assertSessionAccess(req, res, req.params.sessionId)) return;
     const escalations = db.getEscalationsBySession(req.params.sessionId);
     const humanReplies = db.countHumanReplies(req.params.sessionId);
     res.json({ escalations, humanReplies });

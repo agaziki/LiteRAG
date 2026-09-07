@@ -3,9 +3,12 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# 运行时数据（数据库/向量缓存/日志）
+# 运行时数据（数据库/向量缓存/日志/运行配置）
 data/
 *.log
+server/faq-vectors.json
+server/faq-data.json.bak
+server/*.tmp
 
 # 环境变量与密钥（切勿提交）
 .env

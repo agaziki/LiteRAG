@@ -158,6 +158,12 @@ try {
     db.exec("ALTER TABLE sessions ADD COLUMN summary_upto INTEGER");
     console.log("[DB] Added summary/summary_upto columns to sessions table");
   }
+  // v2.0 多租户：会话归属访客
+  if (!sessionsInfo.some(col => col.name === 'visitor_id')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN visitor_id TEXT");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_sessions_visitor ON sessions(visitor_id)");
+    console.log("[DB] Added visitor_id column to sessions table");
+  }
 } catch (e) {
   // 忽略错误（列可能已存在）
 }
@@ -174,6 +180,8 @@ export interface DbSession {
   summary?: string | null;
   /** 摘要已覆盖的消息条数 */
   summary_upto?: number | null;
+  /** v2.0：会话归属访客（匿名 ID 或未来注册用户） */
+  visitor_id?: string | null;
 }
 
 export interface DbMessage {
@@ -202,13 +210,19 @@ export function getSession(id: string): DbSession | undefined {
   return stmt.get(id) as DbSession | undefined;
 }
 
+/** 访客视角：仅取本人会话（管理端仍用 getAllSessions） */
+export function getSessionsByVisitor(visitorId: string): DbSession[] {
+  const stmt = db.prepare('SELECT * FROM sessions WHERE visitor_id = ? ORDER BY updated_at DESC');
+  return stmt.all(visitorId) as DbSession[];
+}
+
 // 创建会话
 export function createSession(session: DbSession): DbSession {
   const stmt = db.prepare(`
-    INSERT INTO sessions (id, title, model, sdk_session_id, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (id, title, model, sdk_session_id, created_at, updated_at, visitor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(session.id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at);
+  stmt.run(session.id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at, session.visitor_id ?? null);
   return session;
 }
 
