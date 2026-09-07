@@ -3,7 +3,20 @@
 本项目的所有重要变更记录在案。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.0.0] — 多租户与实时人工
+## [2.1.0] — Backlog 清算
+
+### 新增
+- 历史图片回传：`VISION_HISTORY_IMAGES=true` + `VISION_HISTORY_IMAGES_COUNT`（默认 2）——视觉模型支持「再看刚才那张图」
+- 用户端实时推送：WebSocket `/ws/user?sessionId=` 人工回复即时推送（轮询保留兜底）；WS 双端点统一 upgrade 分发修复路径竞争
+- 账号体系（基础）：注册/登录/会话查询（`/api/auth/*`），scrypt 加盐，登录绑定 visitor 并迁移历史身份会话
+- 外部渠道桥接：`POST /api/channels/:channel/message`（`CHANNEL_SECRET` 鉴权），企微/公众号经网关对接后复用全部客服管线
+
+### 修复
+- `getMessagesLite` SQL：includeImages 双重 AS 语法错误（渠道/历史链路 500）
+
+[2.1.0]: https://github.com/agaziki/LiteRAG/compare/v2.0.0...v2.1.0
+
+
 
 ### 新增
 - 访客身份与会话隔离：匿名 visitorId（httpOnly cookie，1 年）自动签发；会话全链路归属校验（列表/详情/删除/续聊/评价/转人工），越权 403；管理员不受限

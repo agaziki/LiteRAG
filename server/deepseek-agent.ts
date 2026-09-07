@@ -18,6 +18,8 @@ import * as db from "./db.js";
 export interface AgentMessage {
   role: "user" | "assistant";
   content: string;
+  /** 历史图片回传（VISION_HISTORY_IMAGES 开启时，仅最近 K 条带图用户消息携带） */
+  images?: string[];
 }
 
 export interface RunUsage {
@@ -296,10 +298,12 @@ export async function runDeepSeekAgent(opts: RunAgentOptions): Promise<void> {
   const messages: Array<OpenAI.Chat.Completions.ChatCompletionMessageParam> = [
     { role: "system", content: systemPrompt },
     ...(summary ? [{ role: "system" as const, content: `【更早对话摘要】\n${summary}` }] : []),
-    ...history.map(m => ({
-      role: m.role === "user" ? ("user" as const) : ("assistant" as const),
-      content: m.content,
-    })),
+    ...history.map((m): OpenAI.Chat.Completions.ChatCompletionMessageParam => {
+      if (m.role === "user") {
+        return { role: "user", content: buildUserContent(m.content, m.images) };
+      }
+      return { role: "assistant", content: m.content };
+    }),
     { role: "user", content: buildUserContent(message, images) },
   ];
 

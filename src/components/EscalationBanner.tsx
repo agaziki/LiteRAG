@@ -61,6 +61,29 @@ export function EscalationBanner({ sessionId, refreshKey, onUpdate }: Escalation
     return () => { cancelled = true; clearInterval(timer); };
   }, [sessionId, refreshKey]);
 
+  // WebSocket 实时通道：人工回复即时推送（轮询作为兜底保留）
+  useEffect(() => {
+    if (!sessionId) return;
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    try {
+      ws = new WebSocket(`${proto}//${location.host}/ws/user?sessionId=${encodeURIComponent(sessionId)}`);
+      ws.onmessage = (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          if (m.type === 'human_reply' && !cancelled) {
+            onUpdateRef.current?.(); // 立即刷新会话消息展示人工回复
+          }
+        } catch { /* 忽略 */ }
+      };
+      ws.onerror = () => { /* WS 不可用时静默，轮询兜底 */ };
+    } catch {
+      // 浏览器不支持 WS：轮询兜底
+    }
+    return () => { cancelled = true; ws?.close(); };
+  }, [sessionId]);
+
   if (escalations.length === 0) return null;
 
   const latest = escalations[escalations.length - 1];

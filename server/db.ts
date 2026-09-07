@@ -117,6 +117,15 @@ db.exec(`
     value TEXT NOT NULL
   );
 
+  -- 注册用户（v2.1 账号体系；visitor 绑定实现跨设备会话同步）
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    visitor_id TEXT,
+    created_at TEXT NOT NULL
+  );
+
   -- Token 用量（每次对话一轮 API 调用一条记录）
   CREATE TABLE IF NOT EXISTS token_usage (
     id TEXT PRIMARY KEY,
@@ -492,15 +501,20 @@ export interface DbMessageLite {
   tool_calls: string | null;
   /** 该消息附带的图片数量（0 = 无图） */
   image_count: number;
+  /** 仅 includeImages=true 时有值：images 列原文（JSON 数组字符串） */
+  images_src?: string | null;
 }
 
-export function getMessagesLite(sessionId: string): DbMessageLite[] {
+export function getMessagesLite(sessionId: string, includeImages = false): DbMessageLite[] {
+  // includeImages=true 时带出 images 列（历史图片回传用，调用方须自行限制取用条数）
+  const imageExpr = includeImages ? 'images AS images_src' : 'NULL AS images_src';
   const stmt = db.prepare(`
     SELECT id, role, content, model, created_at, tool_calls,
+           ${imageExpr},
            CASE WHEN images IS NOT NULL THEN json_array_length(images) ELSE 0 END AS image_count
     FROM messages WHERE session_id = ? ORDER BY created_at ASC
   `);
-  return stmt.all(sessionId) as DbMessageLite[];
+  return stmt.all(sessionId) as unknown as DbMessageLite[];
 }
 
 /**
@@ -772,6 +786,41 @@ export function getSessionsWithStats(): SessionWithStats[] {
     ORDER BY s.updated_at DESC
   `).all() as SessionWithStats[];
   return rows;
+}
+
+// ============= 用户账号（v2.1） =============
+
+export interface DbUser {
+  id: string;
+  username: string;
+  password_hash: string;
+  visitor_id: string | null;
+  created_at: string;
+}
+
+export function createUser(user: DbUser): void {
+  db.prepare('INSERT INTO users (id, username, password_hash, visitor_id, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(user.id, user.username, user.password_hash, user.visitor_id, user.created_at);
+}
+
+export function getUserByUsername(username: string): DbUser | undefined {
+  return db.prepare('SELECT * FROM users WHERE username = ?').get(username) as DbUser | undefined;
+}
+
+export function getUserById(id: string): DbUser | undefined {
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(id) as DbUser | undefined;
+}
+
+/** 登录后绑定 visitor：将该 visitor 的既有会话与历史 visitor 会话并入该账号 */
+export function bindVisitor(userId: string, visitorId: string): void {
+  const user = getUserById(userId);
+  if (!user) return;
+  const oldVisitor = user.visitor_id;
+  db.prepare('UPDATE users SET visitor_id = ? WHERE id = ?').run(visitorId, userId);
+  if (oldVisitor && oldVisitor !== visitorId) {
+    // 该账号旧身份下的会话迁移到当前 visitor
+    db.prepare('UPDATE sessions SET visitor_id = ? WHERE visitor_id = ?').run(visitorId, oldVisitor);
+  }
 }
 
 // 清空所有数据

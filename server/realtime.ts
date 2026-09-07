@@ -20,8 +20,18 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
+import type { IncomingMessage } from "http";
+import type { Duplex } from "stream";
+
+let realtimeWss: WebSocketServer | null = null;
+
+/** 供 index.ts 的统一 upgrade 监听分发 /ws/agent */
+export function handleRealtimeUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void {
+  realtimeWss?.handleUpgrade(req, socket, head, ws => realtimeWss!.emit("connection", ws, req));
+}
 import { v4 as uuidv4 } from "uuid";
 import * as db from "./db.js";
+import { notifyHumanReply } from "./user-channel.js";
 
 interface AgentConn {
   ws: WebSocket;
@@ -89,6 +99,7 @@ function handleAgentMessage(conn: AgentConn, raw: string): void {
     const pending = db.getEscalationsBySession(sessionId).filter(e => e.status === "pending").pop();
     if (pending) db.updateEscalationStatus(pending.id, "accepted");
     conn.ws.send(JSON.stringify({ type: "replied", sessionId, message: { id: message.id, content } }));
+    notifyHumanReply(sessionId, content, message.created_at);
     broadcastPending();
     return;
   }
@@ -113,7 +124,9 @@ function handleAgentMessage(conn: AgentConn, raw: string): void {
 }
 
 export function attachRealtime(server: Server): void {
-  const wss = new WebSocketServer({ server, path: "/ws/agent" });
+  const wss = new WebSocketServer({ noServer: true });
+  // 多 WS 端点共存：统一 noServer，由 index.ts 的单一 upgrade 监听按路径分发
+  realtimeWss = wss;
 
   wss.on("connection", (ws, req) => {
     const url = new URL(req.url || "/", "http://localhost");

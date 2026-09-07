@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
 import http from "http";
+import type { Duplex } from "stream";
 import type { Server } from "http";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
@@ -20,7 +21,9 @@ import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
 import { resetFaqToFactory, clearFaqAll } from "./faq.js";
-import { attachRealtime, setTokenValidator, broadcastPending } from "./realtime.js";
+import { attachRealtime, setTokenValidator, broadcastPending, handleRealtimeUpgrade } from "./realtime.js";
+import { attachUserChannel, notifyHumanReply, handleUserUpgrade } from "./user-channel.js";
+import { channelRouter } from "./channels.js";
 import { moderateImage } from "./moderation.js";
 import { ensureVisitor, setAdminCheck } from "./visitor.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
@@ -85,6 +88,12 @@ app.use(express.json({ limit: "50mb" }));
 
 // 访客身份签发：必须先于所有 /api 路由注册
 app.use(ensureVisitor);
+// 外部渠道桥接（企微/公众号经网关转发；CHANNEL_SECRET 鉴权，不依赖 visitor cookie）
+app.use("/api/channels", channelRouter());
+app.use((req: express.Request, _res: express.Response, next: express.NextFunction) => {
+  applyUserIdentity(req);
+  next();
+});
 
 const defaultModel = DEFAULT_MODEL;
 
@@ -353,16 +362,34 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   const selectedModel = model || session.model;
 
   // 加载历史对话（当前用户消息保存之前的记录）。
-  // 历史中的图片不重复发送给模型（成本考虑），以文字备注占位；
-  // 仅当前消息的图片会进入多模态消息体。
+  // 默认：历史图片不发送给模型（成本考虑），以文字备注占位。
+  // VISION_HISTORY_IMAGES=true：回传最近 K 条（VISION_HISTORY_IMAGES_COUNT，默认 2）
+  // 带图用户消息的图片，支持「再看刚才那张图」。
   // lite 读取：不拖出 images 列（含 base64 大对象，同步 IO 会阻塞事件循环）。
-  const existingMessages = db.getMessagesLite(session.id);
+  const visionHistory = process.env.VISION_HISTORY_IMAGES === "true";
+  const visionHistoryMax = Math.max(0, parseInt(process.env.VISION_HISTORY_IMAGES_COUNT || "2", 10) || 2);
+  const existingMessages = db.getMessagesLite(session.id, visionHistory);
+  // 待回传的历史图片：倒序收集最近 K 条带图用户消息，再恢复时序
+  const recentImageMessages: Array<{ id: string; images: string[] }> = [];
+  if (visionHistory) {
+    for (const m of [...existingMessages].reverse()) {
+      if (recentImageMessages.length >= visionHistoryMax) break;
+      if (m.role === 'user' && m.image_count > 0 && m.images_src) {
+        try {
+          const imgs = JSON.parse(m.images_src) as string[];
+          if (Array.isArray(imgs) && imgs.length > 0) recentImageMessages.unshift({ id: m.id, images: imgs });
+        } catch { /* 忽略损坏数据 */ }
+      }
+    }
+  }
+  const carryIds = new Set(recentImageMessages.map(r => r.id));
   let history = existingMessages.map(m => {
     let content = m.content;
-    if (m.role === 'user' && m.image_count > 0) {
+    if (m.role === 'user' && m.image_count > 0 && !carryIds.has(m.id)) {
       content += `\n[该消息附带 ${m.image_count} 张图片]`;
     }
-    return { role: m.role, content };
+    const carried = carryIds.has(m.id) ? recentImageMessages.find(r => r.id === m.id) : undefined;
+    return { role: m.role, content, images: carried?.images };
   });
 
   // 长会话管理：超出滑动窗口的历史以 LLM 摘要替代（摘要按会话缓存，增量超阈值才重新生成）
@@ -620,6 +647,83 @@ function loginSuccess(req: express.Request) {
   loginFails.delete(req.socket.remoteAddress || "unknown");
 }
 
+// ============= 用户账号（v2.1：注册/登录，visitor 绑定跨设备同步） =============
+// 密码 scrypt 加盐存储；会话令牌为内存 token（与管理员令牌同机制）。
+// 未注册使用（匿名 visitor）不受影响。
+
+const userTokens = new Map<string, { userId: string; expiresAt: number }>();
+const USER_TOKEN_TTL = 30 * 24 * 60 * 60 * 1000; // 30 天
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+function verifyPassword(password: string, stored: string): boolean {
+  const [salt, hash] = stored.split(":");
+  if (!salt || !hash) return false;
+  const candidate = crypto.scryptSync(password, salt, 64);
+  const expected = Buffer.from(hash, "hex");
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
+}
+
+app.post("/api/auth/register", rateLimit("register", 5, 60_000), (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const name = String(username || "").trim();
+    if (!/^[\w-]{3,32}$/.test(name)) {
+      return res.status(400).json({ error: "用户名需 3-32 位字母/数字/下划线/中划线" });
+    }
+    if (String(password || "").length < 6) {
+      return res.status(400).json({ error: "密码至少 6 位" });
+    }
+    if (db.getUserByUsername(name)) {
+      return res.status(409).json({ error: "用户名已存在" });
+    }
+    const userId = uuidv4();
+    db.createUser({
+      id: userId,
+      username: name,
+      password_hash: hashPassword(String(password)),
+      visitor_id: getVisitor(req),
+      created_at: new Date().toISOString(),
+    });
+    const token = crypto.randomBytes(32).toString("hex");
+    userTokens.set(token, { userId, expiresAt: Date.now() + USER_TOKEN_TTL });
+    res.json({ success: true, token, username: name });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "注册失败" });
+  }
+});
+
+app.post("/api/auth/login", rateLimit("auth", 10, 60_000), (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    const user = db.getUserByUsername(String(username || ""));
+    if (!user || !verifyPassword(String(password || ""), user.password_hash)) {
+      return res.status(401).json({ error: "用户名或密码错误" });
+    }
+    // 登录绑定当前 visitor：匿名期间的会话并入账号；账号旧会话迁移到本设备
+    db.bindVisitor(user.id, getVisitor(req));
+    const token = crypto.randomBytes(32).toString("hex");
+    userTokens.set(token, { userId: user.id, expiresAt: Date.now() + USER_TOKEN_TTL });
+    res.json({ success: true, token, username: user.username });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "登录失败" });
+  }
+});
+
+app.get("/api/auth/me", (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "");
+  const entry = token ? userTokens.get(token) : undefined;
+  if (!entry || entry.expiresAt < Date.now()) {
+    return res.json({ loggedIn: false });
+  }
+  const user = db.getUserById(entry.userId);
+  if (!user) return res.json({ loggedIn: false });
+  res.json({ loggedIn: true, username: user.username });
+});
+
 // ============= 管理后台鉴权 =============
 // 密码通过 .env 的 ADMIN_PASSWORD 配置；未配置时管理后台与知识库管理 API 整体禁用。
 const ADMIN_TOKEN_TTL = 8 * 60 * 60 * 1000; // 登录有效期 8 小时
@@ -649,6 +753,16 @@ function isAdminRequest(req: express.Request): boolean {
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
   const expiresAt = token ? adminTokens.get(token) : undefined;
   return !!expiresAt && expiresAt >= Date.now();
+}
+
+/** 注册用户身份：token 有效时把 req.visitorId 替换为 uid:<userId>（会话归属用户而非临时 visitor） */
+function applyUserIdentity(req: express.Request): void {
+  const auth = req.headers.authorization || "";
+  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  const entry = token ? userTokens.get(token) : undefined;
+  if (entry && entry.expiresAt >= Date.now()) {
+    (req as any).visitorId = `uid:${entry.userId}`;
+  }
 }
 
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -1193,6 +1307,7 @@ app.post("/api/admin/sessions/:sessionId/reply", (req, res) => {
     });
     const pending = db.getEscalationsBySession(session.id).filter(e => e.status === 'pending').pop();
     if (pending) db.updateEscalationStatus(pending.id, 'accepted');
+    notifyHumanReply(session.id, message.content, message.created_at);
     console.log(`[Escalate] 人工回复已写入会话 ${session.id}`);
     res.json({ success: true, message });
   } catch (error: any) {
@@ -1296,6 +1411,14 @@ setTokenValidator((token) => {
   return !!expiresAt && expiresAt >= Date.now();
 });
 attachRealtime(server as unknown as Server);
+attachUserChannel();
+// 统一 upgrade 入口：按路径分发到坐席/用户两个 WS 端点
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url || "/", "http://localhost");
+  if (pathname === "/ws/agent") handleRealtimeUpgrade(req, socket as unknown as Duplex, head);
+  else if (pathname === "/ws/user") handleUserUpgrade(req, socket as unknown as Duplex, head);
+  else socket.destroy();
+});
 
 server.listen(PORT, () => {
   console.log(`
