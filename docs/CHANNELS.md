@@ -98,7 +98,16 @@ res.send(`<xml><ToUserName><![CDATA[${openid}]]></ToUserName>
 
 ## 三·五、可运行 Demo
 
-`examples/channel-gateway-demo.js` 是零依赖的最小网关演示（模拟用户发消息 → LiteRAG → 打印回复）：
+**① HTML + JS 页面 Demo**（`examples/channel-demo.html`）——浏览器直接打开即可使用：
+聊天窗口排版（简版），渠道接入核心代码（构建请求 / 鉴权头 / 解析 reply）在页内
+`DEMO_CONFIG` 与 `sendToChannel()` 中以注释标注。首次发送会提示填入 LiteRAG
+地址与渠道密钥。
+
+> 跨域提示：从其他域名的页面直接调 LiteRAG 会被浏览器 CORS 拦截。生产渠道网关
+> 是服务端到服务端调用（无 CORS）；本地演示可与 LiteRAG 同源部署，或在反代层为
+> demo 页所在路径加 `Access-Control-Allow-Origin`。
+
+**② Node 命令行 Demo**（`examples/channel-gateway-demo.js`）——零依赖最小网关：
 
 ```bash
 CHANNEL_SECRET=your-shared-secret LITERAG_URL=http://localhost:3000 node examples/channel-gateway-demo.js "退款多久能到账"

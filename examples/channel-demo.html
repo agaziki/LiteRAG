@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LiteRAG 渠道接入 Demo（HTML + JS）</title>
+  <style>
+    /* ===== 排版样式（简单示意，实际渠道有各自的 UI 体系） ===== */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: #f3f4f6; height: 100vh; display: flex; flex-direction: column; }
+    header { background: #0052d9; color: #fff; padding: 12px 20px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    header small { opacity: .8; font-weight: 400; }
+    #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 72%; padding: 10px 14px; border-radius: 14px; line-height: 1.6; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+    .msg.user { align-self: flex-end; background: #0052d9; color: #fff; border-radius: 14px 14px 4px 14px; }
+    .msg.bot { align-self: flex-start; background: #fff; color: #1f2329; border-radius: 14px 14px 14px 4px; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+    .msg.system { align-self: center; background: transparent; color: #9ca3af; font-size: 12px; }
+    footer { background: #fff; border-top: 1px solid #e5e7eb; padding: 12px; display: flex; gap: 10px; }
+    #input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 12px; font-size: 14px; outline: none; }
+    #input:focus { border-color: #0052d9; }
+    #send { background: #0052d9; color: #fff; border: none; border-radius: 8px; padding: 0 22px; font-size: 14px; cursor: pointer; }
+    #send:disabled { opacity: .5; cursor: not-allowed; }
+    .hint { background: #fffbeb; color: #92400e; font-size: 12px; padding: 8px 20px; }
+  </style>
+</head>
+<body>
+  <header>💬 LiteRAG 渠道 Demo <small>模拟企微/公众号会话窗口 · 渠道接入核心逻辑见下方 DEMO_CONFIG 与 sendToChannel()</small></header>
+  <div class="hint">首次使用请先在表单中填入 LiteRAG 地址与渠道密钥（.env 的 CHANNEL_SECRET），回车发送消息。</div>
+  <div id="chat"></div>
+  <footer>
+    <input id="input" placeholder="输入消息，回车发送…" autocomplete="off" />
+    <button id="send">发送</button>
+  </footer>
+
+  <script>
+    /**
+     * ============================================================
+     * 渠道接入核心代码（HTML + JS Demo）
+     * ============================================================
+     *
+     * 真实渠道（企微/公众号）中，本文件的两个函数对应关系：
+     *
+     *   ① addMsg('user', ...)          ← 渠道 SDK/UI 收到用户消息（监听输入或消息回调）
+     *   ② sendToChannel(text)          ← 调 LiteRAG /api/channels/:channel/message 拿 reply
+     *   ③ addMsg('bot', reply)         ← 把 reply 下发给用户（渠道 API 或被动回复）
+     *
+     * LiteRAG 侧约定（详见 docs/CHANNELS.md）：
+     *   POST  {server}/api/channels/:channel/message
+     *   请求头  X-Channel-Secret: 与服务端 .env 的 CHANNEL_SECRET 一致
+     *   请求体  { from: "渠道内用户唯一标识", text: "用户消息文本" }
+     *   响应体  { reply: "Agent 回复文本" }
+     */
+
+    // ===== Demo 配置：首次发送前在此填入（或运行时通过提示输入） =====
+    const DEMO_CONFIG = {
+      server: localStorage.getItem('demo_server') || '',        // 例：http://localhost:3000
+      channel: localStorage.getItem('demo_channel') || 'wecom', // 渠道名（自定义，wecom/wechat-mp/…）
+      from: localStorage.getItem('demo_from') || ('demo-user-' + Math.random().toString(36).slice(2, 8)), // 模拟渠道用户 ID
+    };
+
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendEl = document.getElementById('send');
+
+    function addMsg(role, text) {
+      const div = document.createElement('div');
+      div.className = 'msg ' + role;
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    /** 首次使用：收集 LiteRAG 地址与渠道密钥 */
+    function ensureConfig() {
+      if (DEMO_CONFIG.server && DEMO_CONFIG.secret) return Promise.resolve();
+      const server = prompt('LiteRAG 服务地址（例：http://localhost:3000）:', DEMO_CONFIG.server || location.origin);
+      if (!server) return Promise.reject('未配置服务地址');
+      const secret = prompt('渠道密钥（服务端 .env 的 CHANNEL_SECRET）:');
+      if (!secret) return Promise.reject('未配置渠道密钥');
+      DEMO_CONFIG.server = server.replace(/\/$/, '');
+      DEMO_CONFIG.secret = secret;
+      localStorage.setItem('demo_server', DEMO_CONFIG.server);
+      // 密钥仅存本页内存/localStorage 作演示；生产网关中应放在服务端环境变量
+      localStorage.setItem('demo_secret', secret);
+      return Promise.resolve();
+    }
+
+    /**
+     * ★ 渠道接入核心：把用户消息送到 LiteRAG，拿回 Agent 回复 ★
+     * （对应 docs/CHANNELS.md 「通用协议」一节）
+     */
+    async function sendToChannel(text) {
+      await ensureConfig();
+
+      // ── 渠道接入代码开始 ──────────────────────────────────────────
+      const resp = await fetch(
+        // 1. 端点：/api/channels/:channel/message
+        DEMO_CONFIG.server + '/api/channels/' + encodeURIComponent(DEMO_CONFIG.channel) + '/message',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // 2. 鉴权：X-Channel-Secret 必须与服务端 CHANNEL_SECRET 一致
+            'X-Channel-Secret': localStorage.getItem('demo_secret') || '',
+          },
+          // 3. 请求体：from = 渠道内用户唯一标识；text = 用户消息
+          body: JSON.stringify({ from: DEMO_CONFIG.from, text: text }),
+        }
+      );
+      const data = await resp.json();
+      // 4. 响应：{ reply: "Agent 回复文本" }；出错时为 { error: "..." }
+      if (data.error) throw new Error(data.error);
+      return data.reply;
+      // ── 渠道接入代码结束 ──────────────────────────────────────────
+    }
+
+    // ===== 页面交互（模拟渠道收发；真实渠道替换为渠道 SDK 事件） =====
+    async function handleSend() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = '';
+      sendEl.disabled = true;
+      addMsg('user', text);
+      const thinking = addMsg('bot', '思考中…');
+      try {
+        const reply = await sendToChannel(text); // ← 渠道接入核心调用
+        thinking.textContent = reply;
+        thinking.className = 'msg bot';
+      } catch (e) {
+        thinking.textContent = '发送失败：' + e.message +
+          (String(e.message).includes('Failed to fetch') ? '\n（跨域？需在 LiteRAG 反代/网关放行本页 Origin，或同源部署）' : '');
+        thinking.className = 'msg bot';
+      } finally {
+        sendEl.disabled = false;
+        inputEl.focus();
+      }
+    }
+
+    sendEl.addEventListener('click', handleSend);
+    inputEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') handleSend(); });
+
+    // 开场说明
+    addMsg('system', '渠道接入 Demo：本页模拟一个聊天渠道。第一次发送时会要求填入 LiteRAG 地址与渠道密钥。');
+    addMsg('system', '同一浏览器 = 同一渠道用户（from 固定），刷新后多轮上下文连续。');
+  </script>
+</body>
+</html>

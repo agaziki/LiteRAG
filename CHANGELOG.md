@@ -8,7 +8,7 @@
 ### 新增
 - 转人工接管模式：会话存在排队中/已接入的转人工工单时，用户消息只转达人工（落库 + 坐席实时通知），**不再调用大模型**；人工「标记解决」后自动恢复 AI 应答
 - 账号体系前端呈现：顶栏账号按钮（登录/注册弹窗、已登录显示用户名与退出）；用户侧请求（会话/消息/评价/转人工）自动携带登录凭证，匿名会话登录后跨设备同步
-- 渠道接入 Demo：`examples/channel-gateway-demo.js` 零依赖最小网关演示（收消息 → LiteRAG → 打印回复）
+- 渠道接入 Demo：`examples/channel-gateway-demo.js` 零依赖最小网关演示 + `examples/channel-demo.html` 浏览器聊天页（渠道接入代码注释标注，含 CORS 说明）
 
 ### 文档
 - `.env.example` 补充 `CHANNEL_SECRET`；`docs/CHANNELS.md` 增加 Demo 运行说明
