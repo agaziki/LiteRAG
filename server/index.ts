@@ -2,6 +2,8 @@ import express from "express";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import fs from "fs";
+import http from "http";
+import type { Server } from "http";
 import crypto from "crypto";
 import { fileURLToPath } from "url";
 import multer from "multer";
@@ -18,6 +20,7 @@ import { isEmbeddingEnabled } from "./embeddings.js";
 import { getTopicBoundary, setTopicBoundary } from "./runtime-config.js";
 import { partitionHistory } from "./history.js";
 import { resetFaqToFactory, clearFaqAll } from "./faq.js";
+import { attachRealtime, setTokenValidator, broadcastPending } from "./realtime.js";
 import { moderateImage } from "./moderation.js";
 import { ensureVisitor, setAdminCheck } from "./visitor.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
@@ -42,6 +45,7 @@ try {
 }
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 3000;
 
 // 文件上传（知识库导入用，内存模式，限 10MB）
@@ -991,6 +995,7 @@ app.post("/api/escalate", (req, res) => {
       intent: intent || null,
       created_at: new Date().toISOString(),
     });
+    broadcastPending(); // 实时通知坐席
     console.log(`[Escalate] 会话 ${sessionId} 已转人工：${reason}`);
     res.json({ success: true, escalation: record });
   } catch (error: any) {
@@ -1192,6 +1197,7 @@ app.patch("/api/admin/escalations/:id", (req, res) => {
     }
     const success = db.updateEscalationStatus(req.params.id, status);
     if (!success) return res.status(404).json({ error: "转人工记录不存在" });
+    broadcastPending();
     res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "更新转人工状态失败" });
@@ -1272,7 +1278,14 @@ app.post("/api/utils/fetch-image", async (req, res) => {
 });
 
 // 启动服务器
-app.listen(PORT, () => {
+// 实时人工通道：复用 adminTokens 校验坐席身份
+setTokenValidator((token) => {
+  const expiresAt = adminTokens.get(token);
+  return !!expiresAt && expiresAt >= Date.now();
+});
+attachRealtime(server as unknown as Server);
+
+server.listen(PORT, () => {
   console.log(`
 ╔════════════════════════════════════════════╗
 ║                                            ║

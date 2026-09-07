@@ -618,6 +618,11 @@ export function getAllEscalations(): DbEscalation[] {
   return stmt.all() as DbEscalation[];
 }
 
+/** 全部工单（实时通道广播用，含 contact/note） */
+export function getEscalationsBySessionAll(): DbEscalation[] {
+  return getAllEscalations();
+}
+
 export function updateEscalationStatus(id: string, status: 'pending' | 'accepted' | 'resolved'): boolean {
   const resolvedAt = status === 'resolved' ? new Date().toISOString() : null;
   const stmt = db.prepare('UPDATE escalations SET status = ?, resolved_at = COALESCE(?, resolved_at) WHERE id = ?');
