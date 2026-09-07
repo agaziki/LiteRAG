@@ -47,7 +47,32 @@ const PORT = process.env.PORT || 3000;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    cb(null, true);
+  },
 });
+
+/**
+ * 修复 multipart filename 编码：busboy 将 filename 按 Latin-1 解出（RFC 7578 历史
+ * 行为），UTF-8 文件名（如中文）会变成 mojibake。
+ * 还原策略：按 Latin-1 还原原始字节后尝试 UTF-8 解码；
+ * 失败则尝试 GBK（Windows 下的 curl/部分客户端按系统代码页发送文件名）；
+ * 仍失败则保留原值。
+ */
+function fixMojibake(name: string): string {
+  if (!/[^\x00-\x7F]/.test(name)) return name; // 纯 ASCII 无需处理
+  const bytes = Buffer.from(name, 'latin1');
+  if (bytes.length === 0) return name;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    try {
+      return new TextDecoder('gbk').decode(bytes);
+    } catch {
+      return name;
+    }
+  }
+}
 
 // Middleware
 // JSON 请求体上限 50MB：容纳图片问答（最多 4 张 × 5MB 图片的 base64，约 27MB）
@@ -835,7 +860,7 @@ app.post("/api/faq/import", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "请上传文件（字段名 file）" });
     }
     const mode = req.body.mode === "replace" ? "replace" : "merge";
-    const parsed = await parseImportFile(file.originalname, file.buffer);
+    const parsed = await parseImportFile(fixMojibake(file.originalname), file.buffer);
     const summary = importFaq(parsed.categories, mode as "merge" | "replace");
     res.json({ success: true, mode, summary });
   } catch (error: any) {
@@ -853,7 +878,7 @@ app.post("/api/faq/docs", upload.single("file"), async (req, res) => {
     if (!file) {
       return res.status(400).json({ error: "请上传文件（字段名 file）" });
     }
-    const doc = await ingestDoc(file.originalname, file.buffer);
+    const doc = await ingestDoc(fixMojibake(file.originalname), file.buffer);
     res.json({ success: true, doc });
   } catch (error: any) {
     console.error("[KB Docs] 上传失败:", error?.message);
