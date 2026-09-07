@@ -100,15 +100,27 @@ async function chat(message: string, opts: { model?: string; images?: Buffer[] }
 
 // ============ 回归项 ============
 (async () => {
-  console.log(`E2E 目标: ${BASE}（脚本不读取密钥，由服务端 .env 提供）\n`);
+  console.log(`E2E 目标: ${BASE}（脚本不读取密钥，由服务端 .env / 环境变量提供）\n`);
 
-  // 0. 健康检查
+  // 0. 健康检查 + Key 注入预检（CI Secrets 未配置时 fail fast 并给出明确指引）
   try {
     const health = await (await fetch(`${BASE}/api/health`)).json();
     assert(health.status === 'ok', '健康检查');
   } catch (e: any) {
     assert(false, '健康检查（服务未启动？）', e.message);
     process.exit(1);
+  }
+  try {
+    const login = await (await fetch(`${BASE}/api/check-login`)).json();
+    if (!login.isLoggedIn) {
+      console.error('\n✗ DEEPSEEK_API_KEY 未注入到服务进程。');
+      console.error('  GitHub Actions：确认仓库 Settings → Secrets and variables → Actions');
+      console.error('  中已配置名为 DEEPSEEK_API_KEY 的 secret（区分大小写，无引号/空格）。');
+      process.exit(1);
+    }
+    assert(true, `API Key 注入预检（${login.apiKey}）`);
+  } catch (e: any) {
+    assert(false, 'API Key 注入预检', e.message);
   }
 
   // 1. 普通对话（真实模型调用）

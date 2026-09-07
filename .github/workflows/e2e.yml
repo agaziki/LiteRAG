@@ -30,6 +30,12 @@ jobs:
           RERANK_BASE_URL: ${{ secrets.RERANK_BASE_URL }}
           RERANK_MODEL: ${{ secrets.RERANK_MODEL }}
         run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "✗ Secret DEEPSEEK_API_KEY 未配置。"
+            echo "  请到仓库 Settings → Secrets and variables → Actions 添加 DEEPSEEK_API_KEY。"
+            echo "  配置后重新运行本工作流即可。"
+            exit 1
+          fi
           npx tsx server/index.ts > server.log 2>&1 &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:3000/api/health > /dev/null; then
@@ -39,6 +45,7 @@ jobs:
             sleep 2
           done
           curl -sf http://localhost:3000/api/health
+          curl -sf http://localhost:3000/api/check-login | grep -o '"isLoggedIn":[a-z]*'
 
       - name: 运行 E2E 回归（6 项真链路）
         run: npm run e2e:check
