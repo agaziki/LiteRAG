@@ -35,6 +35,10 @@ interface AdminStats {
     totalRatings: number;
     totalTokens: number;
     estimatedCost: number;
+    price?: {
+      input_per_1m: number;
+      output_per_1m: number;
+    };
   };
   ratingDistribution: { rating: number; count: number }[];
   intentDistribution: { intent: string; count: number }[];
@@ -658,7 +662,7 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
         ) : stats ? (
           <>
             {/* 概览卡片 */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-4 mb-6">
               <StatCard
                 icon={<Users size={20} />}
                 color="#0052d9"
@@ -698,8 +702,8 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 icon={<TrendingUp size={20} />}
                 color="#0594fa"
                 label="估算成本"
-                value={stats.overview.estimatedCost > 0 ? `¥${stats.overview.estimatedCost}` : '-'}
-                sub={stats.overview.estimatedCost > 0 ? '按 .env 单价折算' : '配置 PRICE_*_PER_1M 后显示'}
+                value={stats.overview.estimatedCost > 0 ? `¥${stats.overview.estimatedCost}` : '¥0.00'}
+                sub={`输入 ¥${stats.overview.price?.input_per_1m ?? 0}/百万 · 输出 ¥${stats.overview.price?.output_per_1m ?? 0}/百万`}
               />
             </div>
 

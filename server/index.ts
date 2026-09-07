@@ -1057,6 +1057,7 @@ app.get("/api/admin/stats", (req, res) => {
         totalRatings: ratingStats.total,
         totalTokens: usage.total.total_tokens,
         estimatedCost: Math.round(estimatedCost * 10000) / 10000,
+        price: { input_per_1m: priceInput, output_per_1m: priceOutput },
       },
       ratingDistribution: ratingStats.distribution,
       intentDistribution: intentStats,
