@@ -400,6 +400,41 @@ export function getMessagesBySession(sessionId: string): DbMessage[] {
   return stmt.all(sessionId) as DbMessage[];
 }
 
+/** 历史构建专用：不读出 images 列（可能含数 MB base64，同步 IO 会阻塞事件循环），仅返回图片数量 */
+export interface DbMessageLite {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  model: string | null;
+  created_at: string;
+  tool_calls: string | null;
+  /** 该消息附带的图片数量（0 = 无图） */
+  image_count: number;
+}
+
+export function getMessagesLite(sessionId: string): DbMessageLite[] {
+  const stmt = db.prepare(`
+    SELECT id, role, content, model, created_at, tool_calls,
+           CASE WHEN images IS NOT NULL THEN json_array_length(images) ELSE 0 END AS image_count
+    FROM messages WHERE session_id = ? ORDER BY created_at ASC
+  `);
+  return stmt.all(sessionId) as DbMessageLite[];
+}
+
+/**
+ * 消息计数（会话列表用）。⚠️ 不要用 getMessagesBySession().length 统计——
+ * images 列含 base64 大对象，全量读取会同步阻塞事件循环（曾导致线上 502）。
+ */
+export function getMessageCounts(): Map<string, number> {
+  const rows = db.prepare('SELECT session_id, COUNT(*) AS c FROM messages GROUP BY session_id').all() as Array<{ session_id: string; c: number }>;
+  return new Map(rows.map(r => [r.session_id, r.c]));
+}
+
+/** 单会话人工回复计数（转人工轮询用，避免全量读取） */
+export function countHumanReplies(sessionId: string): number {
+  return (db.prepare("SELECT COUNT(*) AS c FROM messages WHERE session_id = ? AND model = 'human-agent'").get(sessionId) as { c: number }).c;
+}
+
 // 创建消息
 export function createMessage(message: DbMessage): DbMessage {
   const stmt = db.prepare(`

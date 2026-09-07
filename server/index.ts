@@ -160,13 +160,12 @@ app.get("/api/models", (req, res) => {
 app.get("/api/sessions", (req, res) => {
   try {
     const sessions = db.getAllSessions();
-    const sessionsWithMessages = sessions.map(session => {
-      const messages = db.getMessagesBySession(session.id);
-      return {
-        ...session,
-        messageCount: messages.length
-      };
-    });
+    // 一条 GROUP BY 取全部计数：绝不逐会话全量读消息（images 含 base64，会阻塞事件循环）
+    const counts = db.getMessageCounts();
+    const sessionsWithMessages = sessions.map(session => ({
+      ...session,
+      messageCount: counts.get(session.id) ?? 0,
+    }));
     res.json({ sessions: sessionsWithMessages });
   } catch (error: any) {
     console.error("[Sessions] Error:", error);
@@ -315,14 +314,12 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   // 加载历史对话（当前用户消息保存之前的记录）。
   // 历史中的图片不重复发送给模型（成本考虑），以文字备注占位；
   // 仅当前消息的图片会进入多模态消息体。
-  const existingMessages = db.getMessagesBySession(session.id);
+  // lite 读取：不拖出 images 列（含 base64 大对象，同步 IO 会阻塞事件循环）。
+  const existingMessages = db.getMessagesLite(session.id);
   let history = existingMessages.map(m => {
     let content = m.content;
-    if (m.role === 'user' && m.images) {
-      try {
-        const imgs = JSON.parse(m.images);
-        if (Array.isArray(imgs) && imgs.length > 0) content += `\n[该消息附带 ${imgs.length} 张图片]`;
-      } catch { /* 忽略损坏的 images 数据 */ }
+    if (m.role === 'user' && m.image_count > 0) {
+      content += `\n[该消息附带 ${m.image_count} 张图片]`;
     }
     return { role: m.role, content };
   });
@@ -490,8 +487,8 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
     });
 
     // 更新会话标题（如果是第一条消息）
-    const allMessages = db.getMessagesBySession(session.id);
-    if (allMessages.length <= 2) {
+    const messageTotal = (db.getMessageCounts().get(session.id) ?? 0) + 1; // 含刚保存的用户消息
+    if (messageTotal <= 2) {
       db.updateSession(session.id, {
         title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
         model: selectedModel,
@@ -954,8 +951,7 @@ app.post("/api/escalate", (req, res) => {
 app.get("/api/escalate/:sessionId", (req, res) => {
   try {
     const escalations = db.getEscalationsBySession(req.params.sessionId);
-    const humanReplies = db.getMessagesBySession(req.params.sessionId)
-      .filter(m => m.model === 'human-agent').length;
+    const humanReplies = db.countHumanReplies(req.params.sessionId);
     res.json({ escalations, humanReplies });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取转人工状态失败" });
