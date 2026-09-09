@@ -3,7 +3,16 @@
 本项目的所有重要变更记录在案。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [2.2.0] — 部署测试反馈第二轮
+## [2.3.0] — 坐席工作台 + 注册管控
+
+### 新增
+- 坐席工作台（`/agent` 独立界面，管理密码登录）：待接入/服务中双队列（WS 实时推送，含转人工原因与用户留言）、接入、实时回复（用户端即时可见）、标记解决；接管模式用户消息实时提醒坐席；WS 断线自动降级 HTTP
+- 注册管控：`ALLOW_REGISTER=false` 关闭注册；`REGISTER_INVITE_CODE` 配置后注册须携带邀请码（恒定时间比较）；`GET /api/auth/config` 供前端适配
+- WS 协议：pending 广播升级为 queues（pending + active 已接入列表）
+
+[2.3.0]: https://github.com/agaziki/LiteRAG/compare/v2.2.0...v2.3.0
+
+
 
 ### 新增
 - 转人工接管模式：会话存在排队中/已接入的转人工工单时，用户消息只转达人工（落库 + 坐席实时通知），**不再调用大模型**；人工「标记解决」后自动恢复 AI 应答
