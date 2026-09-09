@@ -551,6 +551,12 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
               刷新
             </Button>
           )}
+          <Tooltip content="打开坐席工作台（人工客服界面）">
+            <Button size="small" variant="outline" onClick={() => window.open('/agent', '_blank')}>
+              <Headphones size={14} style={{ marginRight: 4 }} />
+              坐席工作台
+            </Button>
+          </Tooltip>
           <Tooltip content="退出登录">
             <Button variant="text" shape="circle" onClick={handleLogout}>
               <LogOut size={16} />

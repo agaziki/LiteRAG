@@ -12,6 +12,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { ChatPage } from './pages/ChatPage';
 import { AdminPage } from './pages/AdminPage';
+import { AgentDesk } from './pages/AgentDesk';
 import { UserAuthDialog } from './components/UserAuthDialog';
 import { authedFetch, getUserToken, isUserLoggedIn, clearUserToken } from './utils/userAuth';
 
@@ -24,6 +25,8 @@ function App() {
       <Route path="/admin" element={<AppContent />} />
       {/* 网页挂件 iframe 页面（embed.js 引用，侧边栏隐藏的精简对话视图） */}
       <Route path="/widget" element={<AppContent />} />
+      {/* 坐席工作台：独立界面（管理密码登录） */}
+      <Route path="/agent" element={<AgentDesk />} />
       <Route path="/settings" element={<Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

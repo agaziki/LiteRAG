@@ -696,7 +696,26 @@ function verifyPassword(password: string, stored: string): boolean {
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
+// 注册配置（公开）：前端据此渲染注册表单/邀请码框
+app.get("/api/auth/config", (req, res) => {
+  const closed = process.env.ALLOW_REGISTER === "false";
+  const invite = !!process.env.REGISTER_INVITE_CODE;
+  res.json({ allowRegister: !closed && true, inviteRequired: invite, inviteMode: invite ? "required" : "optional" });
+});
+
 app.post("/api/auth/register", rateLimit("register", 5, 60_000), (req, res) => {
+  // 注册管控：ALLOW_REGISTER=false 关闭；配置 REGISTER_INVITE_CODE 时必须携带正确邀请码
+  if (process.env.ALLOW_REGISTER === "false") {
+    return res.status(403).json({ error: "注册已关闭，请联系管理员开通账号" });
+  }
+  const inviteCode = process.env.REGISTER_INVITE_CODE;
+  if (inviteCode) {
+    const a = Buffer.from(String(req.body?.inviteCode || ""));
+    const b = Buffer.from(inviteCode);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      return res.status(403).json({ error: "邀请码错误" });
+    }
+  }
   try {
     const { username, password } = req.body || {};
     const name = String(username || "").trim();

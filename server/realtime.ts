@@ -48,18 +48,22 @@ export function setTokenValidator(fn: (token: string) => boolean): void {
 
 export function broadcastPending(): void {
   const rows = db.getEscalationsBySessionAll();
-  const pending = rows
-    .filter(e => e.status === "pending")
-    .map(e => ({
-      sessionId: e.session_id,
-      escalationId: e.id,
-      reason: e.reason,
-      intent: e.intent,
-      created_at: e.created_at,
-      contact: e.contact ?? null,
-      note: e.note ?? null,
-    }));
-  const payload = JSON.stringify({ type: "pending", sessions: pending });
+  const toView = (e: db.DbEscalation) => ({
+    sessionId: e.session_id,
+    escalationId: e.id,
+    reason: e.reason,
+    intent: e.intent,
+    created_at: e.created_at,
+    status: e.status,
+    contact: e.contact ?? null,
+    note: e.note ?? null,
+  });
+  // pending = 待接入；active = 已接入（坐席工作台的并行服务列表）
+  const payload = JSON.stringify({
+    type: "queues",
+    pending: rows.filter(e => e.status === "pending").map(toView),
+    active: rows.filter(e => e.status === "accepted").map(toView),
+  });
   for (const conn of agents) {
     if (conn.ws.readyState === WebSocket.OPEN) conn.ws.send(payload);
   }
