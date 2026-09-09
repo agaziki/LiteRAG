@@ -150,7 +150,7 @@ export function ChatMessages({
 
   // 最后一条已完成的助手消息（用于显示满意度评价；人工客服回复不参与评价）
   const lastAssistantId = [...messages].reverse().find(
-    m => m.role === 'assistant' && !m.isStreaming && m.model !== 'human-agent'
+    m => m.role === 'assistant' && !m.isStreaming && m.model !== 'human-agent' && m.model !== 'human-takeover'
   )?.id;
 
   return (
@@ -176,7 +176,7 @@ export function ChatMessages({
           <div 
             className={`flex flex-col gap-2 max-w-[80%] ${message.role === 'user' ? 'items-end' : ''}`}
           >
-            {message.role === 'assistant' && message.model && (
+            {message.role === 'assistant' && message.model && message.model !== 'human-takeover' && (
               <span
                 className="text-xs"
                 style={{ color: 'var(--td-text-color-placeholder)' }}
@@ -217,6 +217,16 @@ export function ChatMessages({
               </div>
             )}
 
+            {/* 转人工接管提示：居中系统样式 */}
+            {message.role === 'assistant' && message.model === 'human-takeover' && (
+              <div
+                className="text-xs px-3 py-1.5 rounded-full self-center"
+                style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+              >
+                {message.content}
+              </div>
+            )}
+
             {/* 人工客服回复：特殊样式渲染 */}
             {message.role === 'assistant' && message.model === 'human-agent' && (
               <div
@@ -239,7 +249,7 @@ export function ChatMessages({
             )}
 
             {/* 助手消息 - 按顺序渲染内容块（人工回复已在上方单独渲染） */}
-            {message.role === 'assistant' && message.model !== 'human-agent' && renderAssistantContent(message)}
+            {message.role === 'assistant' && message.model !== 'human-agent' && message.model !== 'human-takeover' && renderAssistantContent(message)}
 
             {/* 参考来源（答案引用溯源）：从 search_faq 工具调用结果提取 */}
             {message.role === 'assistant' && message.model !== 'human-agent' && (() => {

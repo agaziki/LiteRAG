@@ -465,6 +465,17 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       : '已为您转接人工客服，您的消息已转达。人工客服（每日 9:00-22:00）将在这里直接回复您，请耐心等待。';
     console.log(`[Chat] 转人工接管模式（${activeEscalation.status}），消息已转达人工`);
     res.write(`data: ${JSON.stringify({ type: "text", content: notice })}\n\n`);
+    // 提示落库（assistant 消息，model=human-takeover 以区分 AI 回复；刷新后回显一致）
+    db.createMessage({
+      id: assistantMessageId,
+      session_id: session.id,
+      role: 'assistant',
+      content: notice,
+      model: 'human-takeover',
+      created_at: new Date().toISOString(),
+      tool_calls: null,
+      images: null,
+    });
     res.write(`data: ${JSON.stringify({ type: "done", duration: 0, turns: 0 })}\n\n`);
     res.end();
     return;
@@ -1247,7 +1258,9 @@ app.get("/api/admin/sessions/:sessionId", (req, res) => {
     }
     const messages = db.getMessagesBySession(sessionId).map(msg => ({
       ...msg,
-      tool_calls: msg.tool_calls ? JSON.parse(msg.tool_calls) : null
+      tool_calls: msg.tool_calls ? JSON.parse(msg.tool_calls) : null,
+      // images 须解析为数组（前端渲染缩略图用）；损坏数据防御为 null
+      images: msg.images ? (() => { try { const v = JSON.parse(msg.images); return Array.isArray(v) ? v : null; } catch { return null; } })() : null,
     }));
     const ratings = db.getRatingsBySession(sessionId);
     const escalations = db.getEscalationsBySession(sessionId);

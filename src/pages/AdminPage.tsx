@@ -1020,7 +1020,9 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                           borderRadius: m.role === 'user' ? '12px 12px 4px 12px' : '12px 12px 12px 4px',
                         }}
                       >
-                        {m.role === 'user' ? m.content : <ChatMarkdown content={m.content} />}
+                        {m.role === 'user' ? m.content
+                          : m.model === 'human-takeover' ? <span className="text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>{m.content}</span>
+                          : <ChatMarkdown content={m.content} />}
                       </div>
                     </div>
                   </div>
