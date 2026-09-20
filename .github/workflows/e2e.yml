@@ -1,9 +1,11 @@
 name: E2E
 
+# 项目进入稳定期，自 2026-09-20 起停用每日定时回归。
+# 恢复方式：在 on 下重新加入
+#   schedule:
+#     - cron: '0 18 * * *'   # 每日 UTC 18:00 = 北京时间 02:00
 on:
-  schedule:
-    - cron: '0 18 * * *'   # 每日 UTC 18:00 = 北京时间 02:00
-  workflow_dispatch:        # 支持面板手动触发
+  workflow_dispatch:        # 仅保留面板手动触发
 
 jobs:
   e2e:
