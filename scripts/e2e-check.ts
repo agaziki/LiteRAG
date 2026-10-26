@@ -10,8 +10,9 @@
 import zlib from 'zlib';
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:3000';
-const MAIN_MODEL = 'deepseek-v4-flash';
-const VISION_MODEL = 'deepseek-v4-flash-vision-exp';
+// deepseek-flash（V4.1）原生多模态，主模型即视觉模型；旧 vision-exp 名称已下线
+const MAIN_MODEL = 'deepseek-flash';
+const VISION_MODEL = 'deepseek-flash';
 
 let passed = 0;
 let failed = 0;
@@ -128,7 +129,7 @@ async function chat(message: string, opts: { model?: string; images?: Buffer[] }
     const t0 = Date.now();
     const r = await chat('你好，请用一句话介绍你自己');
     assert(r.status === 200 && !r.error && r.text.trim().length > 0,
-      '普通对话（deepseek-v4-flash 流式回复）',
+      '普通对话（deepseek-flash 流式回复）',
       `${r.text.trim().slice(0, 30)}… / ${Date.now() - t0}ms`);
   }
 
@@ -145,7 +146,7 @@ async function chat(message: string, opts: { model?: string; images?: Buffer[] }
   {
     const r = await chat('我要申请退货退款，这张图片是我拍的商品照片，请告诉我这张图片是什么颜色，只回答颜色名称。', { model: VISION_MODEL, images: [makeSolidPng([255, 0, 0])] });
     assert(!r.error && /(红|red)/i.test(r.text),
-      '视觉识图（vision-exp 识别纯红图）',
+      '视觉识图（deepseek-flash 识别纯红图）',
       `答=${r.text.trim().slice(0, 30)}`);
   }
 

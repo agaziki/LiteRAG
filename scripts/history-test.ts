@@ -43,7 +43,7 @@ console.log('\n[2] 摘要缓存持久化');
 {
   const db = await import('../server/db.js');
   const now = new Date().toISOString();
-  db.createSession({ id: 's-h', title: '长会话', model: 'deepseek-v4-flash', sdk_session_id: null, created_at: now, updated_at: now });
+  db.createSession({ id: 's-h', title: '长会话', model: 'deepseek-flash', sdk_session_id: null, created_at: now, updated_at: now });
   const before = db.getSession('s-h')!;
   assert(!before.summary && (before.summary_upto ?? 0) === 0 || before.summary == null, '初始无摘要', before);
 

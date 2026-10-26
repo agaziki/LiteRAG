@@ -44,10 +44,10 @@
 
 | 模型 ID | 说明 |
 |---------|------|
-| `deepseek-v4-flash` | **默认模型**。DeepSeek V4 系列高效 MoE 模型（公测），支持函数调用与长上下文，性价比高 |
-| `deepseek-v4-flash-vision-exp` | 实验版：在 V4-Flash 基础上支持图片输入 |
+| `deepseek-flash` | **默认模型**。DeepSeek V4.1-Flash（DeepSeek-V4.1-Flash-1017），原生多模态支持图片输入，支持函数调用与长上下文，性价比高 |
+| `deepseek-v4-pro` | V4 Pro 正式版，面向重度 Agent 与复杂任务，仅文本输入 |
 
-> 模型列表在 `server/deepseek-agent.ts` 的 `getDeepSeekModels()` 中维护，默认模型为 `deepseek-v4-flash`。输入框工具栏的图片按钮仅在选用视觉模型时显示。
+> 模型列表在 `server/deepseek-agent.ts` 的 `getDeepSeekModels()` 中维护，默认模型为 `deepseek-flash`。输入框工具栏的图片按钮仅在选用具备视觉能力（`vision` 元数据）的模型时显示。历史遗留模型名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 已下线，官方暂时兼容路由但已冻结更新。
 
 ## 图片问答（视觉模型）
 
@@ -96,7 +96,7 @@ npm run dev
    │
    ▼
 runDeepSeekAgent()  ──► openai SDK (base_url: https://api.deepseek.com)
-   │                      model: deepseek-v4-flash (支持函数调用)
+   │                      model: deepseek-flash (支持函数调用)
    │
    ▼
 DeepSeek 返回文本流 + tool_calls

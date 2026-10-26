@@ -27,7 +27,7 @@ import { channelRouter } from "./channels.js";
 import { moderateImage } from "./moderation.js";
 import { ensureVisitor, setAdminCheck } from "./visitor.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
-import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, validateImages, summarizeConversation } from "./deepseek-agent.js";
+import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, normalizeModel, validateImages, summarizeConversation } from "./deepseek-agent.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -247,7 +247,7 @@ app.post("/api/sessions", (req, res) => {
     const session = db.createSession({
       id: uuidv4(),
       title,
-      model,
+      model: normalizeModel(model),
       sdk_session_id: null,
       created_at: now,
       updated_at: now,
@@ -345,7 +345,7 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
     session = db.createSession({
       id: sessionId || uuidv4(),
       title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
-      model: model || defaultModel,
+      model: normalizeModel(model || defaultModel),
       sdk_session_id: null,
       created_at: now,
       updated_at: now,
@@ -359,7 +359,7 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
     console.log(`[Chat] 使用现有会话: ${session.id}`);
   }
 
-  const selectedModel = model || session.model;
+  const selectedModel = normalizeModel(model || session.model);
 
   // 加载历史对话（当前用户消息保存之前的记录）。
   // 默认：历史图片不发送给模型（成本考虑），以文字备注占位。

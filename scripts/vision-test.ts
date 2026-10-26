@@ -69,9 +69,9 @@ console.log('\n[3] 数据库 images 列回读');
 {
   const { createSession, createMessage, getMessagesBySession } = await import('../server/db.js');
   const now = new Date().toISOString();
-  createSession({ id: 's-vision', title: '视觉测试', model: 'deepseek-v4-flash-vision-exp', sdk_session_id: null, created_at: now, updated_at: now });
+  createSession({ id: 's-vision', title: '视觉测试', model: 'deepseek-flash', sdk_session_id: null, created_at: now, updated_at: now });
   createMessage({ id: 'm1', session_id: 's-vision', role: 'user', content: '看看这张图', model: null, created_at: now, tool_calls: null, images: JSON.stringify([PNG_1PX, PNG_1PX]) });
-  createMessage({ id: 'm2', session_id: 's-vision', role: 'assistant', content: '这是一张 1x1 图片。', model: 'deepseek-v4-flash-vision-exp', created_at: now, tool_calls: null, images: null });
+  createMessage({ id: 'm2', session_id: 's-vision', role: 'assistant', content: '这是一张 1x1 图片。', model: 'deepseek-flash', created_at: now, tool_calls: null, images: null });
 
   const msgs = getMessagesBySession('s-vision');
   const user = msgs.find(m => m.id === 'm1')!;

@@ -6,6 +6,8 @@ export interface Model {
   modelId: string;
   name: string;
   description?: string;
+  /** 是否具备视觉能力（图片输入）；deepseek-flash 原生多模态 */
+  vision?: boolean;
 }
 
 export interface ToolCall {

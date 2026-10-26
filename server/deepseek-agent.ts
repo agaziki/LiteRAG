@@ -37,7 +37,7 @@ export interface AgentToolCall {
 export interface RunAgentOptions {
   sessionId: string;
   message: string;
-  /** 图片（data URL），仅 deepseek-v4-flash-vision-exp 等视觉模型支持 */
+  /** 图片（data URL），仅具备视觉能力的模型支持（deepseek-flash 原生多模态） */
   images?: string[];
   model: string;
   systemPrompt: string;
@@ -434,16 +434,30 @@ export async function summarizeConversation(model: string, messages: AgentMessag
 export function getDeepSeekModels() {
   return [
     {
-      modelId: "deepseek-v4-flash",
-      name: "DeepSeek V4-Flash",
-      description: "V4 系列高效 MoE 模型（公测），支持函数调用与长上下文，性价比高，客服场景推荐",
+      modelId: "deepseek-flash",
+      name: "DeepSeek V4.1-Flash",
+      description: "最新 V4.1-Flash（DeepSeek-V4.1-Flash-1017），原生多模态支持图片输入，函数调用与长上下文，性价比高，客服场景推荐",
+      vision: true,
     },
     {
-      modelId: "deepseek-v4-flash-vision-exp",
-      name: "DeepSeek V4-Flash Vision",
-      description: "实验版（deepseek-v4-flash-vision-exp）：在 V4-Flash 基础上支持图片输入",
+      modelId: "deepseek-v4-pro",
+      name: "DeepSeek V4-Pro",
+      description: "V4 Pro 正式版，面向重度 Agent 与复杂任务，仅文本输入",
+      vision: false,
     },
   ];
 }
 
-export const DEFAULT_MODEL = "deepseek-v4-flash";
+export const DEFAULT_MODEL = "deepseek-flash";
+
+/** 已下线旧模型名 → 新模型名（官方暂时兼容路由但已冻结，统一迁移避免日后失效） */
+const LEGACY_MODEL_MAP: Record<string, string> = {
+  "deepseek-v4-flash": "deepseek-flash",
+  "deepseek-v4-flash-vision-exp": "deepseek-flash",
+};
+
+/** 旧模型名归一化为当前模型名（历史会话续聊兜底） */
+export function normalizeModel(model: string | null | undefined): string {
+  if (!model) return DEFAULT_MODEL;
+  return LEGACY_MODEL_MAP[model] ?? model;
+}

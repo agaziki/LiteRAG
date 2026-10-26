@@ -73,8 +73,8 @@ export function ChatInput({
   const [isDragging, setIsDragging] = useState(false);
   const [fetchingImage, setFetchingImage] = useState(false);
   const dragDepth = useRef(0);
-  // 仅视觉模型显示图片按钮（deepseek-v4-flash-vision-exp 等）
-  const isVisionModel = selectedModel.includes('vision');
+  // 仅视觉模型显示图片按钮（以 /api/models 的 vision 元数据判定）
+  const isVisionModel = models.find(m => m.modelId === selectedModel)?.vision === true;
 
   const addImages = useCallback(async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
@@ -184,11 +184,11 @@ export function ChatInput({
   // 切换到非视觉模型时清空待发图片，避免无效发送
   const handleModelChange = useCallback((modelId: string) => {
     onModelChange(modelId);
-    if (!modelId.includes('vision') && pendingImages.length > 0) {
+    if (models.find(m => m.modelId === modelId)?.vision !== true && pendingImages.length > 0) {
       setPendingImages([]);
       MessagePlugin.warning('当前模型不支持图片，已清空待发送图片');
     }
-  }, [pendingImages.length, onModelChange]);
+  }, [models, pendingImages.length, onModelChange]);
 
   const handleSend = useCallback((e: any) => {
     const content = e?.detail?.message || e?.detail || e?.message || inputValue;
