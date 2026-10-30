@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react';
 import { authedFetch } from '../utils/userAuth';
+import { getAdminToken } from '../utils/adminAuth';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, ToolCall, Session, CustomAgent, ContentBlock } from '../types';
 
@@ -260,9 +261,15 @@ export function useChat(options: UseChatOptions) {
     abortRef.current = controller;
 
     try {
+      // 管理员登录态经 x-admin-token 并行携带：服务端仅对管理员放行自定义 systemPrompt，
+      // 匿名访客/普通用户一律使用内置客服提示词（安全收口）
+      const adminToken = getAdminToken();
       const response = await authedFetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(adminToken ? { 'x-admin-token': adminToken } : {}),
+        },
         body: JSON.stringify({
           sessionId,
           message: messageContent,

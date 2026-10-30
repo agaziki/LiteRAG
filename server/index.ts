@@ -24,7 +24,12 @@ import { resetFaqToFactory, clearFaqAll } from "./faq.js";
 import { attachRealtime, setTokenValidator, broadcastPending, broadcastUserMessage, handleRealtimeUpgrade } from "./realtime.js";
 import { attachUserChannel, notifyHumanReply, handleUserUpgrade } from "./user-channel.js";
 import { channelRouter } from "./channels.js";
-import { moderateImage } from "./moderation.js";
+import { moderateImage, moderateText } from "./moderation.js";
+import {
+  scoreInput, arbitrateInput, checkOutput,
+  MAX_MESSAGE_LENGTH, STRIKE_LIMIT, STRIKE_WINDOW_MIN,
+  GUARD_REFUSAL_REPLY, isGuardEnabled,
+} from "./guard.js";
 import { ensureVisitor, setAdminCheck } from "./visitor.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { runDeepSeekAgent, getDeepSeekModels, resetClient, DEFAULT_MODEL, normalizeModel, validateImages, summarizeConversation } from "./deepseek-agent.js";
@@ -330,9 +335,15 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   console.log(`[Chat] Message: ${message?.slice(0, 100)}${message?.length > 100 ? '...' : ''}`);
   if (validatedImages.length > 0) console.log(`[Chat] Images: ${validatedImages.length} 张`);
 
-  if (!message) {
-    console.log(`[Chat] 错误: 消息为空`);
+  if (!message || typeof message !== "string") {
+    console.log(`[Chat] 错误: 消息为空或类型非法`);
     return res.status(400).json({ error: "消息不能为空" });
+  }
+
+  // 输入长度上限：压缩复杂注入模板的施展空间（GUARD_MAX_MESSAGE_LENGTH，默认 4000 字符）
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    console.log(`[Chat] 拒绝: 消息过长（${message.length} > ${MAX_MESSAGE_LENGTH}）`);
+    return res.status(400).json({ error: `消息过长，请控制在 ${MAX_MESSAGE_LENGTH} 字符以内` });
   }
 
   // 获取或创建会话
@@ -357,6 +368,75 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       return res.status(403).json({ error: "无权访问该会话" });
     }
     console.log(`[Chat] 使用现有会话: ${session.id}`);
+  }
+
+  // ============= 输入安全防护（guard） =============
+  // 高风险：疑似注入模板组合 → 拦截（消息不入库，防历史投毒）并计入累犯
+  // 中风险：可疑但不确定 → 放行但缓冲输出做金丝雀检查（可选 LLM 仲裁 / 文本审核）
+  // 低风险/干净：正常放行
+  let bufferOutput = false;
+  {
+    // 累犯收紧：窗口内被拦截/输出替换达阈值的访客直接限流（GUARD_STRIKE_LIMIT/WINDOW_MIN）
+    const strikes = db.countRecentGuardStrikes(getVisitor(req), STRIKE_WINDOW_MIN);
+    if (strikes >= STRIKE_LIMIT) {
+      console.log(`[Guard] 访客 ${getVisitor(req)} 窗口内累计 ${strikes} 次命中，临时限制`);
+      return res.status(429).json({ error: "触发安全限制，请稍后再试，或转人工客服处理您的问题" });
+    }
+
+    const guard = scoreInput(message);
+    const logGuard = (risk: "low" | "medium" | "high", action: "log" | "pass" | "blocked") => {
+      try {
+        db.createGuardEvent({
+          id: uuidv4(),
+          session_id: session.id,
+          visitor_id: getVisitor(req),
+          risk,
+          action,
+          score: guard.score,
+          reasons: guard.reasons.length > 0 ? JSON.stringify(guard.reasons) : null,
+          excerpt: message.slice(0, 200),
+          created_at: new Date().toISOString(),
+        });
+      } catch (e: any) {
+        console.error(`[Guard] 事件记录失败:`, e?.message);
+      }
+    };
+
+    if (guard.risk === "high") {
+      logGuard("high", "blocked");
+      console.log(`[Guard] 拦截高风险消息 (score=${guard.score}):`, guard.reasons.join("; "));
+      return res.status(400).json({ error: GUARD_REFUSAL_REPLY });
+    }
+
+    if (guard.risk === "medium") {
+      // 可选二阶段：外部文本审核（TEXT_MODERATION=true）、LLM 仲裁（GUARD_LLM_ARBITRATION=true）
+      let blocked = false;
+      const violation = await moderateText(message);
+      if (violation) {
+        blocked = true;
+        guard.reasons.push(`text_moderation: ${violation}`);
+      } else if (process.env.GUARD_LLM_ARBITRATION === "true") {
+        try {
+          const verdict = await arbitrateInput(message);
+          if (verdict.injection) {
+            blocked = true;
+            guard.reasons.push(`llm_arbitration: ${verdict.reason}`);
+          }
+        } catch (e: any) {
+          console.warn(`[Guard] LLM 仲裁失败（fail-open 放行）:`, e?.message);
+        }
+      }
+      if (blocked) {
+        logGuard("high", "blocked");
+        console.log(`[Guard] 中风险消息经二阶段判定拦截:`, guard.reasons.join("; "));
+        return res.status(400).json({ error: GUARD_REFUSAL_REPLY });
+      }
+      bufferOutput = true;
+      logGuard("medium", "pass");
+      console.log(`[Guard] 中风险消息放行并缓冲输出 (score=${guard.score}):`, guard.reasons.join("; "));
+    } else if (guard.risk === "low") {
+      logGuard("low", "log");
+    }
   }
 
   const selectedModel = normalizeModel(model || session.model);
@@ -440,8 +520,16 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // 构建系统提示词：优先用前端传入的（自定义 Agent），否则用客服默认提示词
-  const finalSystemPrompt = systemPrompt || buildCustomerServicePrompt(session.id);
+  // 构建系统提示词：自定义提示词仅管理员可用（安全收口——匿名访客/普通用户
+  // 一律使用内置客服提示词，防止请求体篡改人设绕过全部约束）
+  const requestedPrompt = typeof systemPrompt === "string" ? systemPrompt.trim() : "";
+  const isAdmin = isAdminRequest(req);
+  if (requestedPrompt && !isAdmin) {
+    console.log(`[Chat] 安全策略: 非管理员请求携带自定义 systemPrompt，已忽略（使用内置客服提示词）`);
+  }
+  const finalSystemPrompt = requestedPrompt && isAdmin
+    ? requestedPrompt
+    : buildCustomerServicePrompt(session.id);
 
   // 发送 init 事件
   res.write(`data: ${JSON.stringify({
@@ -484,6 +572,8 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
   // 累积完整回复和工具调用
   let fullResponse = "";
   let lastErrorMessage = "";
+  // 中风险会话的输出缓冲区：完整回复先过金丝雀检查再放行（P0-3 分级缓冲）
+  let bufferedResponse = "";
   let lastLatencyMs: number | null = null;
   const toolCalls: Array<{
     id: string;
@@ -519,6 +609,11 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       history,
       signal: ac.signal,
       onText: (chunk) => {
+        if (bufferOutput) {
+          // 中风险会话：缓冲完整回复，onDone 时统一过金丝雀检查再放行/替换
+          bufferedResponse += chunk;
+          return;
+        }
         fullResponse += chunk;
         res.write(`data: ${JSON.stringify({ type: "text", content: chunk })}\n\n`);
       },
@@ -549,6 +644,33 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       },
       onDone: ({ duration, turns, usage }) => {
         lastLatencyMs = duration;
+        // 中风险会话：输出金丝雀检查通过则整体放行，不通过则替换为标准话术
+        if (bufferOutput) {
+          const verdict = checkOutput(bufferedResponse);
+          if (verdict.ok) {
+            fullResponse = bufferedResponse;
+            res.write(`data: ${JSON.stringify({ type: "text", content: bufferedResponse })}\n\n`);
+          } else {
+            fullResponse = GUARD_REFUSAL_REPLY;
+            console.warn(`[Guard] 输出检查不通过，已替换: ${verdict.reason}`);
+            try {
+              db.createGuardEvent({
+                id: uuidv4(),
+                session_id: session.id,
+                visitor_id: getVisitor(req),
+                risk: "medium",
+                action: "output_blocked",
+                score: 0,
+                reasons: JSON.stringify([verdict.reason]),
+                excerpt: bufferedResponse.slice(0, 200),
+                created_at: new Date().toISOString(),
+              });
+            } catch (e: any) {
+              console.error(`[Guard] 事件记录失败:`, e?.message);
+            }
+            res.write(`data: ${JSON.stringify({ type: "text", content: GUARD_REFUSAL_REPLY })}\n\n`);
+          }
+        }
         console.log(`[Chat] 完成: ${turns} 轮, ${duration}ms, tokens=${usage.total_tokens}`);
         try {
           db.createTokenUsage({
@@ -569,6 +691,10 @@ app.post("/api/chat", rateLimit("chat", 20, 60_000), async (req, res) => {
       onError: (error) => {
         console.error(`[Chat] Agent 错误:`, error.message);
         lastErrorMessage = error.message;
+        // 出错路径不做输出门控（流已终止），缓冲内容仅落库供审计
+        if (bufferOutput && bufferedResponse) {
+          fullResponse = bufferedResponse;
+        }
         res.write(`data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`);
       },
     });
@@ -798,9 +924,16 @@ app.post("/api/admin/login", (req, res) => {
 
 function isAdminRequest(req: express.Request): boolean {
   const auth = req.headers.authorization || "";
-  const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  const expiresAt = token ? adminTokens.get(token) : undefined;
-  return !!expiresAt && expiresAt >= Date.now();
+  const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+  // x-admin-token 附加头：聊天等接口的 Authorization 被用户账号 token 占用时，
+  // 管理员凭证可经此头并行携带（同一密钥，仅换呈现位置，不降低校验强度）
+  const raw = req.headers["x-admin-token"];
+  const header = typeof raw === "string" ? raw : "";
+  const candidates = [bearer, header].filter(Boolean);
+  return candidates.some(t => {
+    const expiresAt = adminTokens.get(t);
+    return !!expiresAt && expiresAt >= Date.now();
+  });
 }
 
 /** 注册用户身份：token 有效时把 req.visitorId 替换为 uid:<userId>（会话归属用户而非临时 visitor） */
@@ -862,6 +995,16 @@ app.get("/api/admin/data-stats", (req, res) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: error?.message || "获取数据统计失败" });
+  }
+});
+
+// 安全防护事件（guard 命中记录：输入拦截/缓冲放行/输出替换）
+app.get("/api/admin/guard-events", (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit || "100"), 10) || 100));
+    res.json({ events: db.getGuardEvents(limit), stats: db.getGuardStats() });
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || "获取防护事件失败" });
   }
 });
 

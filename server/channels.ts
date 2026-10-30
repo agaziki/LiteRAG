@@ -19,6 +19,7 @@ import * as db from "./db.js";
 import { runDeepSeekAgent } from "./deepseek-agent.js";
 import { buildCustomerServicePrompt } from "./customer-service-prompt.js";
 import { DEFAULT_MODEL } from "./deepseek-agent.js";
+import { scoreInput, checkOutput, MAX_MESSAGE_LENGTH, GUARD_REFUSAL_REPLY } from "./guard.js";
 
 /** 渠道会话定位：同一渠道用户复用最近会话（24h 内），否则新建 */
 function resolveChannelSession(channelVisitorId: string, model: string): db.DbSession {
@@ -55,9 +56,37 @@ export function channelRouter(): express.Router {
       if (!from || !text) {
         return res.status(400).json({ error: "需要 from 与 text" });
       }
+      if (text.length > MAX_MESSAGE_LENGTH) {
+        return res.json({ reply: `您的消息过长（上限 ${MAX_MESSAGE_LENGTH} 字符），请分条发送` });
+      }
 
       const visitorId = `channel:${channel}:${from}`;
       const session = resolveChannelSession(visitorId, DEFAULT_MODEL);
+
+      // 输入防护：高风险直接回标准话术（渠道场景以文本应答而非 HTTP 错误，网关直接透出）
+      const guard = scoreInput(text);
+      const logGuard = (risk: "low" | "medium" | "high", action: "log" | "pass" | "blocked" | "output_blocked", score: number, reasons: string[], excerpt: string) => {
+        try {
+          db.createGuardEvent({
+            id: uuidv4(),
+            session_id: session.id,
+            visitor_id: visitorId,
+            risk,
+            action,
+            score,
+            reasons: reasons.length > 0 ? JSON.stringify(reasons) : null,
+            excerpt: excerpt.slice(0, 200),
+            created_at: new Date().toISOString(),
+          });
+        } catch (e: any) {
+          console.error(`[Guard] 事件记录失败:`, e?.message);
+        }
+      };
+      if (guard.risk === "high") {
+        logGuard("high", "blocked", guard.score, guard.reasons, text);
+        console.log(`[Guard] 渠道 ${channel} 拦截高风险消息 (score=${guard.score})`);
+        return res.json({ reply: GUARD_REFUSAL_REPLY });
+      }
 
       // 沿用主链路：历史 → Agent → 回复
       const existingMessages = db.getMessagesLite(session.id);
@@ -75,6 +104,18 @@ export function channelRouter(): express.Router {
         onDone: () => {},
         onError: err => { reply = reply || `抱歉，处理您的请求时出错：${err.message}`; },
       });
+
+      // 输出防护：渠道回复本就全量缓冲，中/高风险输入的回复过一遍金丝雀检查
+      if (guard.risk !== "clean" && guard.risk !== "low") {
+        const verdict = checkOutput(reply);
+        if (!verdict.ok) {
+          logGuard("medium", "output_blocked", guard.score, [verdict.reason || "输出检查不通过"], reply);
+          console.warn(`[Guard] 渠道 ${channel} 输出检查不通过，已替换: ${verdict.reason}`);
+          reply = GUARD_REFUSAL_REPLY;
+        }
+      }
+      if (guard.risk === "medium") logGuard("medium", "pass", guard.score, guard.reasons, text);
+      else if (guard.risk === "low") logGuard("low", "log", guard.score, guard.reasons, text);
 
       res.json({ reply: reply || "（无回复内容）" });
     } catch (error: any) {

@@ -140,6 +140,22 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_token_usage_session ON token_usage(session_id);
   CREATE INDEX IF NOT EXISTS idx_token_usage_created ON token_usage(created_at);
+
+  -- 安全防护事件（guard.ts 命中记录：输入风险/拦截/输出替换，管理后台审计用）
+  CREATE TABLE IF NOT EXISTS guard_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT,
+    visitor_id TEXT,
+    risk TEXT NOT NULL CHECK (risk IN ('low', 'medium', 'high')),
+    action TEXT NOT NULL CHECK (action IN ('log', 'pass', 'blocked', 'output_blocked')),
+    score INTEGER NOT NULL DEFAULT 0,
+    reasons TEXT,
+    excerpt TEXT,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_guard_events_visitor ON guard_events(visitor_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_guard_events_created ON guard_events(created_at);
 `);
 
 // 数据库迁移：补充列（如果不存在）
@@ -786,6 +802,75 @@ export function getSessionsWithStats(): SessionWithStats[] {
     ORDER BY s.updated_at DESC
   `).all() as SessionWithStats[];
   return rows;
+}
+
+// ============= 安全防护事件（guard） =============
+
+export interface DbGuardEvent {
+  id: string;
+  session_id: string | null;
+  visitor_id: string | null;
+  /** low=仅记录 medium=缓冲观察 high=拦截 */
+  risk: 'low' | 'medium' | 'high';
+  /** log=低风险留痕 pass=放行 blocked=输入拦截 output_blocked=输出替换 */
+  action: 'log' | 'pass' | 'blocked' | 'output_blocked';
+  score: number;
+  /** 命中特征（JSON 数组字符串） */
+  reasons: string | null;
+  /** 消息摘要（前 200 字符，审计用） */
+  excerpt: string | null;
+  created_at: string;
+}
+
+export function createGuardEvent(event: DbGuardEvent): void {
+  db.prepare(`
+    INSERT INTO guard_events (id, session_id, visitor_id, risk, action, score, reasons, excerpt, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    event.id,
+    event.session_id,
+    event.visitor_id,
+    event.risk,
+    event.action,
+    event.score,
+    event.reasons,
+    event.excerpt,
+    event.created_at
+  );
+}
+
+export function getGuardEvents(limit = 100): DbGuardEvent[] {
+  return db.prepare('SELECT * FROM guard_events ORDER BY created_at DESC LIMIT ?').all(limit) as DbGuardEvent[];
+}
+
+export interface GuardStats {
+  total: number;
+  today: number;
+  high7d: number;
+  blocked7d: number;
+}
+
+/** 防护事件统计：累计 / 今日 / 近 7 天高风险与拦截数 */
+export function getGuardStats(): GuardStats {
+  const one = (sql: string, ...params: (string | number)[]) =>
+    (db.prepare(sql).get(...params) as { c: number }).c;
+  const todayStart = new Date(new Date().toDateString()).toISOString();
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+  return {
+    total: one('SELECT COUNT(*) c FROM guard_events'),
+    today: one('SELECT COUNT(*) c FROM guard_events WHERE created_at >= ?', todayStart),
+    high7d: one("SELECT COUNT(*) c FROM guard_events WHERE risk = 'high' AND created_at >= ?", sevenDaysAgo),
+    blocked7d: one("SELECT COUNT(*) c FROM guard_events WHERE action IN ('blocked', 'output_blocked') AND created_at >= ?", sevenDaysAgo),
+  };
+}
+
+/** 累犯统计：某访客在窗口分钟内被拦截/输出替换的次数（达到阈值后收紧） */
+export function countRecentGuardStrikes(visitorId: string, windowMinutes: number): number {
+  const cutoff = new Date(Date.now() - windowMinutes * 60000).toISOString();
+  return (db.prepare(`
+    SELECT COUNT(*) c FROM guard_events
+    WHERE visitor_id = ? AND action IN ('blocked', 'output_blocked') AND created_at >= ?
+  `).get(visitorId, cutoff) as { c: number }).c;
 }
 
 // ============= 用户账号（v2.1） =============

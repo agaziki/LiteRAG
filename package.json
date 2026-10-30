@@ -31,7 +31,7 @@
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.node.json && vite build",
     "preview": "vite preview",
     "start": "tsx server/index.ts",
-    "test": "tsx scripts/faq-test.ts && tsx scripts/faq-import-test.ts && tsx scripts/kb-docs-test.ts && tsx scripts/vision-test.ts && tsx scripts/history-test.ts",
+    "test": "tsx scripts/faq-test.ts && tsx scripts/faq-import-test.ts && tsx scripts/kb-docs-test.ts && tsx scripts/vision-test.ts && tsx scripts/history-test.ts && tsx scripts/guard-test.ts",
     "embed:check": "tsx scripts/embed-check.ts",
     "e2e:check": "tsx scripts/e2e-check.ts"
   },

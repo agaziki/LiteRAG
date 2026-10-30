@@ -108,6 +108,37 @@ const INTENT_LABELS: Record<string, string> = {
   refund: '退款', order: '查询订单', tech: '技术支持', general: '通用咨询', other: '其他',
 };
 
+// 安全防护事件（guard.ts 命中记录）
+interface GuardEventRow {
+  id: string;
+  session_id: string | null;
+  visitor_id: string | null;
+  risk: 'low' | 'medium' | 'high';
+  action: 'log' | 'pass' | 'blocked' | 'output_blocked';
+  score: number;
+  reasons: string | null;
+  excerpt: string | null;
+  created_at: string;
+}
+
+interface GuardEventData {
+  events: GuardEventRow[];
+  stats: { total: number; today: number; high7d: number; blocked7d: number };
+}
+
+const GUARD_RISK_CONFIG: Record<GuardEventRow['risk'], { label: string; color: string }> = {
+  low: { label: '低风险', color: '#909399' },
+  medium: { label: '中风险', color: '#e37318' },
+  high: { label: '高风险', color: 'var(--td-error-color)' },
+};
+
+const GUARD_ACTION_CONFIG: Record<GuardEventRow['action'], { label: string; color: string }> = {
+  log: { label: '留痕', color: '#909399' },
+  pass: { label: '缓冲放行', color: '#e37318' },
+  blocked: { label: '已拦截', color: 'var(--td-error-color)' },
+  output_blocked: { label: '输出已替换', color: 'var(--td-error-color)' },
+};
+
 const INTENT_COLORS: Record<string, string> = {
   refund: '#e37318', order: '#0052d9', tech: '#7b61ff', general: '#2ba471', other: '#909399',
 };
@@ -294,6 +325,27 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
   useEffect(() => {
     if (authed && tab === 'gaps' && gaps === null) fetchGaps();
   }, [authed, tab, gaps, fetchGaps]);
+
+  // ---- 安全防护事件（guard） ----
+  const [guardData, setGuardData] = useState<GuardEventData | null>(null);
+  const [guardLoading, setGuardLoading] = useState(false);
+
+  const fetchGuard = useCallback(async () => {
+    setGuardLoading(true);
+    try {
+      const res = await adminFetch('/api/admin/guard-events?limit=100');
+      if (handleAuthExpired(res)) { setAuthed(false); return; }
+      setGuardData(await res.json());
+    } catch {
+      MessagePlugin.error('加载防护事件失败');
+    } finally {
+      setGuardLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authed && tab === 'analytics' && guardData === null) fetchGuard();
+  }, [authed, tab, guardData, fetchGuard]);
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -833,6 +885,122 @@ export function AdminPage({ agents, onAdd, onUpdate, onDelete }: AdminPageProps)
                 )}
               </Card>
             </div>
+
+            {/* 安全防护事件（输入拦截 / 缓冲放行 / 输出替换审计） */}
+            <Card
+              title={
+                <Space>
+                  <AlertCircle size={16} />
+                  <span>安全防护事件（注入/越狱尝试审计）</span>
+                  <Button size="small" variant="text" onClick={fetchGuard} loading={guardLoading}>
+                    <RefreshCw size={13} style={{ marginRight: 4 }} />
+                    刷新
+                  </Button>
+                </Space>
+              }
+              bordered
+              className="mb-6"
+            >
+              {guardData ? (
+                <>
+                  <div className="grid grid-cols-4 gap-3 py-2 mb-3 text-center">
+                    {[
+                      ['累计事件', guardData.stats.total],
+                      ['今日', guardData.stats.today],
+                      ['近 7 天高风险', guardData.stats.high7d],
+                      ['近 7 天拦截/替换', guardData.stats.blocked7d],
+                    ].map(([label, val]) => (
+                      <div key={String(label)}>
+                        <div className="text-lg font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
+                          {Number(val).toLocaleString()}
+                        </div>
+                        <div className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>{label}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {guardData.events.length === 0 ? (
+                    <Empty description="暂无防护事件——未检测到注入尝试" />
+                  ) : (
+                    <Table
+                      size="small"
+                      rowKey="id"
+                      maxHeight={360}
+                      data={guardData.events}
+                      columns={[
+                        {
+                          colKey: 'created_at',
+                          title: '时间',
+                          width: 150,
+                          render: ({ row }: any) => <span style={{ fontSize: 12, color: 'var(--td-text-color-secondary)' }}>{formatTime(row.created_at)}</span>,
+                        },
+                        {
+                          colKey: 'risk',
+                          title: '风险',
+                          width: 90,
+                          render: ({ row }: any) => (
+                            <Tag color="warning" style={{ color: GUARD_RISK_CONFIG[row.risk as GuardEventRow['risk']]?.color }}>
+                              {GUARD_RISK_CONFIG[row.risk as GuardEventRow['risk']]?.label || row.risk}
+                            </Tag>
+                          ),
+                        },
+                        {
+                          colKey: 'action',
+                          title: '处置',
+                          width: 110,
+                          render: ({ row }: any) => (
+                            <Tag color="warning" style={{ color: GUARD_ACTION_CONFIG[row.action as GuardEventRow['action']]?.color }}>
+                              {GUARD_ACTION_CONFIG[row.action as GuardEventRow['action']]?.label || row.action}
+                            </Tag>
+                          ),
+                        },
+                        { colKey: 'score', title: '评分', width: 70, align: 'center' as const },
+                        {
+                          colKey: 'excerpt',
+                          title: '消息摘要',
+                          ellipsis: true,
+                          render: ({ row }: any) => (
+                            <Tooltip content={row.excerpt}>
+                              <span style={{ fontSize: 12 }}>{row.excerpt || '-'}</span>
+                            </Tooltip>
+                          ),
+                        },
+                        {
+                          colKey: 'reasons',
+                          title: '命中特征',
+                          ellipsis: true,
+                          render: ({ row }: any) => {
+                            let items: string[] = [];
+                            try { items = row.reasons ? JSON.parse(row.reasons) : []; } catch { /* 忽略 */ }
+                            return (
+                              <Tooltip content={items.join('；')}>
+                                <span style={{ fontSize: 12, color: 'var(--td-text-color-secondary)' }}>
+                                  {items.length > 0 ? items.join('；') : '-'}
+                                </span>
+                              </Tooltip>
+                            );
+                          },
+                        },
+                        {
+                          colKey: 'session_id',
+                          title: '会话',
+                          width: 110,
+                          render: ({ row }: any) => row.session_id ? (
+                            <a
+                              onClick={() => openDetail(row.session_id)}
+                              style={{ color: 'var(--td-brand-color)', cursor: 'pointer', fontSize: 12 }}
+                            >
+                              查看会话
+                            </a>
+                          ) : <span style={{ color: 'var(--td-text-color-placeholder)' }}>-</span>,
+                        },
+                      ]}
+                    />
+                  )}
+                </>
+              ) : (
+                <Loading size="small" />
+              )}
+            </Card>
 
             {/* 会话记录表格 */}
             <Card
